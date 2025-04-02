@@ -462,6 +462,36 @@ class LayerNorm(Function):
         #   END ASSIGN3_2
 
 
+class FlashAttention(Function):
+    @staticmethod
+    def forward(ctx: Context, Q: Tensor, K: Tensor, V: Tensor) -> Tensor:
+        #   BEGIN ASSIGN3_2
+        O = Q.f.flash_attention_fw(Q, K, V)
+        return O
+
+        #   END ASSIGN3_2
+
+    @staticmethod
+    def backward(ctx: Context, out_grad: Tensor) -> Tensor:
+        #   BEGIN ASSIGN3_2
+        raise("NOT IMPLEMENTED YET")
+
+
+class FlashAttentionCausal(Function):
+    @staticmethod
+    def forward(ctx: Context, Q: Tensor, K: Tensor, V: Tensor) -> Tensor:
+        #   BEGIN ASSIGN3_2
+        O = Q.f.flash_attention_causal_fw(Q, K, V)
+        return O
+
+        #   END ASSIGN3_2
+
+    @staticmethod
+    def backward(ctx: Context, out_grad: Tensor) -> Tensor:
+        #   BEGIN ASSIGN3_2
+        raise ("NOT IMPLEMENTED YET")
+
+
 # Helpers for Constructing tensors
 def zeros(shape: UserShape, backend: TensorBackend = SimpleBackend) -> Tensor:
     """

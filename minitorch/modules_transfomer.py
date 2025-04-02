@@ -24,6 +24,7 @@ class MultiHeadAttention(Module):
         bias: bool = True,
         backend: TensorBackend = None,
         use_fused_kernel: bool = False,
+        use_flash_attention: bool = False
     ):
         super().__init__()
         """Implements Multi-Head Attention as described in "Attention Is All You Need"
@@ -54,6 +55,7 @@ class MultiHeadAttention(Module):
         self.v_projection = Linear(self.n_embd, self.n_embd, bias, backend)
         self.out_projection = Linear(self.n_embd, self.n_embd, bias, backend)
         self.dropout = Dropout(p_dropout)
+        self.use_flash_attention = use_flash_attention
 
     def create_causal_mask(self, bs, nh, seq_len):
         """
@@ -91,7 +93,7 @@ class MultiHeadAttention(Module):
         v = v.view(*(batch_size, seq_len, self.n_head, self.attn_hidden_dim))
         v = v.permute(0, 2, 1, 3)
 
-        return q, kT, v
+        return q, k, kT, v
 
     def self_attention(self, q, kT, v):
         """Given q, kT, and v of sizes defined above, return the result of MultiHeadAttention as described in the writeup
@@ -109,29 +111,15 @@ class MultiHeadAttention(Module):
             output : Tensor of shape (batch_size, seq_len, n_embd)
         """
         batch_size, num_head, queries_len, q_dim = q.shape
-        _, _, k_dim, _ = kT.shape
+        if self.use_flash_attention:
+            _, _, _, k_dim = kT.shape
+        else:
+            _, _, k_dim, _ = kT.shape
         _, _, _, v_dim = v.shape
         assert q_dim == k_dim == v_dim
         result = None
 
-        if not self.use_fused_kernel:
-            if self.causal:
-                ### BEGIN YOUR SOLUTION
-                result = (
-                    softmax(
-                        (q @ kT) / (self.attn_hidden_dim**0.5)
-                        + self.create_causal_mask(batch_size, num_head, queries_len),
-                        dim=3,
-                    )
-                    @ v
-                )
-            else:
-                result = softmax((q @ kT) / (self.attn_hidden_dim**0.5), dim=3) @ v
-
-            ### END YOUR SOLUTION
-
-        else:
-            # BEGIN ASSIGN3_3
+        if self.use_fused_kernel:
             if self.causal:
                 ### BEGIN YOUR SOLUTION
                 result = (
@@ -146,6 +134,29 @@ class MultiHeadAttention(Module):
                 result = (
                     q.attn_softmax((q @ kT) / (self.attn_hidden_dim**0.5), dim=3) @ v
                 )
+
+            ### END YOUR SOLUTION
+
+        elif self.use_flash_attention:
+            if not self.causal:
+                result = q.flash_attention(kT, v)
+            else:
+                result = q.flash_attention_causal(kT, v)
+
+        else:
+            # BEGIN ASSIGN3_3
+            if self.causal:
+                ### BEGIN YOUR SOLUTION
+                result = (
+                    softmax(
+                        (q @ kT) / (self.attn_hidden_dim**0.5)
+                        + self.create_causal_mask(batch_size, num_head, queries_len),
+                        dim=3,
+                    )
+                    @ v
+                )
+            else:
+                result = softmax((q @ kT) / (self.attn_hidden_dim**0.5), dim=3) @ v
 
             # END ASSIGN3_3
         result = result.permute(0, 2, 1, 3)
@@ -164,8 +175,12 @@ class MultiHeadAttention(Module):
         """
         batch_size, seq_len, n_embd = x.shape
         # COPY FROM ASSIGN2_4
-        q, kT, v = self.project_to_query_key_value(x)
-        self_attention = self.self_attention(q, kT, v)
+        q, k ,kT, v = self.project_to_query_key_value(x)
+        if self.use_flash_attention:
+            self_attention = self.self_attention(q, k, v)
+        else:
+            self_attention = self.self_attention(q, kT, v)
+            
         return self.out_projection(
             self_attention.view(*(batch_size * seq_len, n_embd))
         ).view(*(batch_size, seq_len, n_embd))
@@ -227,6 +242,7 @@ class TransformerLayer(Module):
         bias: bool = True,
         backend: TensorBackend = None,
         use_fused_kernel: bool = False,
+        use_flash_attention: bool = False,
     ):
         super().__init__()
         """A Transformer Layer in a Pre-LN Transformer.
@@ -247,7 +263,7 @@ class TransformerLayer(Module):
 
         # COPY FROM ASSIGN2_4
         self.attention = MultiHeadAttention(
-            n_embd, n_head, True, p_dropout, bias, backend
+            n_embd, n_head, True, p_dropout, bias, backend, use_flash_attention
         )
         self.ff = FeedForward(n_embd, 256, p_dropout, bias, backend)
 
@@ -314,6 +330,7 @@ class DecoderLM(Module):
         bias: bool = True,
         backend: TensorBackend = None,
         use_fused_kernel: bool = False,
+        use_flash_attention: bool = False,
     ):
         super().__init__()
         """A Full Decoder-only Pre-LN Transformer with 4 Transformer Layers.
@@ -346,16 +363,16 @@ class DecoderLM(Module):
         self.token_embeddings = Embedding(n_vocab, n_embd, backend)
         self.position_embeddings = Embedding(n_vocab, n_embd, backend)
         self.t_layer_1 = TransformerLayer(
-            n_embd, n_head, p_dropout, ln_eps, bias, backend
+            n_embd, n_head, p_dropout, ln_eps, bias, backend, use_flash_attention
         )
         self.t_layer_2 = TransformerLayer(
-            n_embd, n_head, p_dropout, ln_eps, bias, backend
+            n_embd, n_head, p_dropout, ln_eps, bias, backend, use_flash_attention
         )
         self.t_layer_3 = TransformerLayer(
-            n_embd, n_head, p_dropout, ln_eps, bias, backend
+            n_embd, n_head, p_dropout, ln_eps, bias, backend, use_flash_attention
         )
         self.t_layer_4 = TransformerLayer(
-            n_embd, n_head, p_dropout, ln_eps, bias, backend
+            n_embd, n_head, p_dropout, ln_eps, bias, backend, use_flash_attention
         )
         self.dropout = Dropout(p_dropout)
         self.lm_head = Linear(n_embd, n_vocab, bias, backend)

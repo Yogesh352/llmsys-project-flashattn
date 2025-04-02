@@ -26,6 +26,8 @@ import torch
 lib = ctypes.CDLL("minitorch/cuda_kernels/combine.so")
 lib_softmax = ctypes.CDLL("minitorch/cuda_kernels/softmax_kernel.so")
 lib_layernorm = ctypes.CDLL("minitorch/cuda_kernels/layernorm_kernel.so")
+lib_flashattention = ctypes.CDLL("minitorch/cuda_kernels/flashattention_kernel.so")
+
 datatype = np.float32
 
 # function map
@@ -599,3 +601,103 @@ class CudaKernelOps(TensorOps):
         return inp_grad, gamma_grad, beta_grad
 
         #   END ASSIGN3_2
+
+    @staticmethod
+    def flash_attention_fw(Q: Tensor, K: Tensor, V: Tensor):  
+
+        l = Q.zeros((Q.shape[0], Q.shape[1], Q.shape[2]))
+
+        B = Q.shape[0]
+        nh = Q.shape[1]
+        N = Q.shape[2]
+        d = Q.shape[3]
+        O = Q.zeros((B, nh, N, d))
+        print("Q_SHAPE: ", Q.shape)
+
+        # l = Q.((Q.shape[0], Q.shape[1], Q.shape[2]))
+        # inp_grad = inp.zeros(inp.shape)
+
+        m = tensor_from_numpy(
+            np.full((B, nh, N), -np.inf),
+            backend=Q.backend,
+            requires_grad=True,
+        )
+        lib_flashattention.launch_flashattention_forward.argtypes = [
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+        ]
+
+        lib_flashattention.launch_flashattention_forward.restype = None
+
+        lib_flashattention.launch_flashattention_forward(
+            Q._tensor._storage,
+            K._tensor._storage,
+            V._tensor._storage,
+            O._tensor._storage,
+            l._tensor._storage,
+            m._tensor._storage,
+            B,
+            nh,
+            N,
+            d,
+        )
+
+        return O
+
+    @staticmethod
+    def flash_attention_causal_fw(Q: Tensor, K: Tensor, V: Tensor):
+        O = Q.zeros((Q.shape))
+        l = Q.zeros((Q.shape[0], Q.shape[1], Q.shape[2]))
+
+        B = Q.shape[0]
+        nh = Q.shape[1]
+        N = Q.shape[2]
+        d = Q.shape[3]
+
+        print("Q_SHAPE: ", Q.shape)
+
+        # l = Q.((Q.shape[0], Q.shape[1], Q.shape[2]))
+        # inp_grad = inp.zeros(inp.shape)
+
+        m = tensor_from_numpy(
+            np.full((Q.shape[0], Q.shape[1], Q.shape[2]), -np.inf),
+            backend=Q.backend,
+            requires_grad=True,
+        )
+        lib_flashattention.launch_flashattention_forward_causal.argtypes = [
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+        ]
+
+        lib_flashattention.launch_flashattention_forward_causal.restype = None
+
+        lib_flashattention.launch_flashattention_forward_causal(
+            Q._tensor._storage,
+            K._tensor._storage,
+            V._tensor._storage,
+            O._tensor._storage,
+            l._tensor._storage,
+            m._tensor._storage,
+            B,
+            nh,
+            N,
+            d,
+        )
+
+        return O

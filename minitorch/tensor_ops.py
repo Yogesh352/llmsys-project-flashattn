@@ -98,7 +98,9 @@ class TensorBackend:
         self.attn_softmax_bw = ops.attn_softmax_bw
         self.layernorm_fw = ops.layernorm_fw
         self.layernorm_bw = ops.layernorm_bw
-
+        self.flash_attention_fw = ops.flash_attention_fw
+        self.flash_attention_causal_fw = ops.flash_attention_causal_fw
+        # self.flash_attention_bw = ops.flash_attention_bw
 
 class SimpleOps(TensorOps):
     @staticmethod
@@ -234,19 +236,31 @@ class SimpleOps(TensorOps):
 
     @staticmethod
     def attn_softmax_fw(inp: Tensor, mask: Tensor):
-      raise NotImplementedError("Not implemented in this assignment")
+        raise NotImplementedError("Not implemented in this assignment")
 
     @staticmethod
     def attn_softmax_bw():
-      raise NotImplementedError("Not implemented in this assignment")
+        raise NotImplementedError("Not implemented in this assignment")
 
     @staticmethod
     def layernorm_fw(inp: tensor):
-      raise NotImplementedError("Not implemented in this assignment")
+        raise NotImplementedError("Not implemented in this assignment")
 
     @staticmethod
     def layernorm_bw():
-      raise NotImplementedError("Not implemented in this assignment")
+        raise NotImplementedError("Not implemented in this assignment")
+    
+    @staticmethod
+    def flash_attention_fw():
+        raise NotImplementedError("Not implemented in this assignment")
+
+    @staticmethod
+    def flash_attention_bw():
+        raise NotImplementedError("Not implemented in this assignment")
+    
+    @staticmethod
+    def flash_attention_causal_fw():
+        raise NotImplementedError("Not implemented in this assignment")
 
     is_cuda = False
 
