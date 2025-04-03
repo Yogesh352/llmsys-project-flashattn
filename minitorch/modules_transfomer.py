@@ -10,6 +10,8 @@ from .nn import (
     GELU,
 )
 from typing import Any, Dict, Optional, Sequence, Tuple
+import math
+import torch.nn.functional as F
 
 datatype = np.float32
 
@@ -88,12 +90,18 @@ class MultiHeadAttention(Module):
         k = self.k_projection(x.view(*(batch_size * seq_len, n_embd)))
         k = k.view(*(batch_size, seq_len, self.n_head, self.attn_hidden_dim))
         kT = k.permute(0, 2, 3, 1)
+        # kT = k
 
         v = self.v_projection(x.view(*(batch_size * seq_len, n_embd)))
         v = v.view(*(batch_size, seq_len, self.n_head, self.attn_hidden_dim))
         v = v.permute(0, 2, 1, 3)
 
-        return q, k, kT, v
+        # print("in projection")
+        # print(q)
+        # print(k)
+        # print(v)
+
+        return q, kT, v
 
     def self_attention(self, q, kT, v):
         """Given q, kT, and v of sizes defined above, return the result of MultiHeadAttention as described in the writeup
@@ -111,11 +119,10 @@ class MultiHeadAttention(Module):
             output : Tensor of shape (batch_size, seq_len, n_embd)
         """
         batch_size, num_head, queries_len, q_dim = q.shape
-        if self.use_flash_attention:
-            _, _, _, k_dim = kT.shape
-        else:
-            _, _, k_dim, _ = kT.shape
+
+        _, _, k_dim, _ = kT.shape
         _, _, _, v_dim = v.shape
+
         assert q_dim == k_dim == v_dim
         result = None
 
@@ -139,7 +146,24 @@ class MultiHeadAttention(Module):
 
         elif self.use_flash_attention:
             if not self.causal:
+                # print("MODULES TRANSFORMER BEFORE")
+                # print(q._tensor._storage)
+                # print(kT._tensor._storage)
+                # print(v._tensor._storage)
+
+                # print(q)
+                # print(kT)
+                # print(v)
+
                 result = q.flash_attention(kT, v)
+
+                # k = kT.permute(0, 1, 3, 2)
+                # result_2 = softmax((q @ k) / (self.attn_hidden_dim**0.5), dim=3) @ v
+                # print("RESULTS")
+                # print(result)
+                # print(result_2)
+                # assert result == result_2
+
             else:
                 result = q.flash_attention_causal(kT, v)
 
@@ -156,12 +180,18 @@ class MultiHeadAttention(Module):
                     @ v
                 )
             else:
+                # print("MATRICES")
+                # print(q, kT, v)
                 result = softmax((q @ kT) / (self.attn_hidden_dim**0.5), dim=3) @ v
 
             # END ASSIGN3_3
+        # print("SHAPE OF RESULT")
+        # print(result)
         result = result.permute(0, 2, 1, 3)
         result = result.contiguous()
         result = result.view(*(batch_size, queries_len, self.n_embd))
+        # print(result.shape)
+
         return result
 
     def forward(self, x):
@@ -175,15 +205,15 @@ class MultiHeadAttention(Module):
         """
         batch_size, seq_len, n_embd = x.shape
         # COPY FROM ASSIGN2_4
-        q, k ,kT, v = self.project_to_query_key_value(x)
-        if self.use_flash_attention:
-            self_attention = self.self_attention(q, k, v)
-        else:
-            self_attention = self.self_attention(q, kT, v)
+        q, kT, v = self.project_to_query_key_value(x)
+     
             
+        self_attention = self.self_attention(q, kT, v)
+
         return self.out_projection(
             self_attention.view(*(batch_size * seq_len, n_embd))
         ).view(*(batch_size, seq_len, n_embd))
+        # return None
 
 
 class FeedForward(Module):

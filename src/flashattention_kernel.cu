@@ -15,7 +15,10 @@ void forward_kernel(const float* Q, const float* K, const float* V, const int N,
     int batch_idx = blockIdx.x; 
     int head_idx = blockIdx.y;  
 
-    int qkv_offset = (batch_idx * gridDim.y * N * d) + (head_idx * N * d);  
+    int qkv_offset = (batch_idx * gridDim.y * N * d) + (head_idx * N * d); 
+    int qkv_offset_2 = (batch_idx * gridDim.y * N * d) + (head_idx / gridDim.y * (block_size_K) * d) + (head_idx * d);
+    
+
     int lm_offset = (batch_idx * gridDim.y * N) + (head_idx * N);  
 
     extern __shared__ float shared_memory[];
@@ -27,8 +30,13 @@ void forward_kernel(const float* Q, const float* K, const float* V, const int N,
 
     for (int tile_idx_K = 0; tile_idx_K < num_tiles_K; tile_idx_K++) {
         for (int x = 0; x < d; x++) {
-            Kj[(thread_idx * d) + x] = K[qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x];
-            Vj[(thread_idx * d) + x] = V[qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x];
+            
+            Kj[(thread_idx * d) + x] = K[qkv_offset_2 + (tile_size * tile_idx_K) + (thread_idx * gridDim.y * d) + x];
+            Vj[(thread_idx * d) + x] = V[qkv_offset_2 + (tile_size * tile_idx_K) + (thread_idx * gridDim.y * d) + x];
+            // printf("Head %d: Key[%d] = %f, Value[%d] = %f, qkv_offset = %d\n", head_idx, qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x, Kj[(thread_idx * d) + x], 
+            // qkv_offset + (tile_size * tile_idx_K) + (thread_idx * gridDim.y * d) + x, Vj[(thread_idx * d) + x], qkv_offset);
+            // printf("ADDITIONAL ON TOP OF OFFSET = %d\n",   (thread_idx * gridDim.y * d));
+
             // printf("K and V access: %d\n", qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x);
         }
         __syncthreads();  
@@ -36,7 +44,9 @@ void forward_kernel(const float* Q, const float* K, const float* V, const int N,
         for (int tile_idx_Q = 0; tile_idx_Q < num_tiles_Q; tile_idx_Q++)  {
 
             for (int x = 0; x < d; x++) {
-                Qi[(thread_idx * d) + x] = Q[qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x];
+                Qi[(thread_idx * d) + x] = Q[qkv_offset_2 + (tile_size * tile_idx_Q) + (thread_idx * d * gridDim.y) + x];
+                // printf("Head %d: Query[%d] = %f\n", head_idx, qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x,  Qi[(thread_idx * d) + x]);
+
                 // printf("Q access: %d\n", qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x);
             }
 
@@ -49,9 +59,15 @@ void forward_kernel(const float* Q, const float* K, const float* V, const int N,
                 float sum = 0;
                 for (int x = 0; x < d; x++) {
                     sum += Qi[(thread_idx * d) + x] * Kj[(y * d) + x];
+                    // printf("For index: %d, Head %d: Query[%d] = %f, Kj[%d] = %f\n", (block_size_K * thread_idx) + y, head_idx, (thread_idx * d) + x,  Qi[(thread_idx * d) + x], (y * d) + x,  Kj[(y * d) + x]);
+
                 }
+                // printf("sum = %f\n", sum);
                 sum *= softmax_scale; 
+                // printf("sum after scaling = %f\n", sum);
                 S[(block_size_K * thread_idx) + y] = sum;
+                // printf("Head %d: S[%d] = %f\n",  head_idx, (block_size_K * thread_idx) + y, S[(block_size_K * thread_idx) + y] );
+
 
                 if (sum > row_max)
                     row_max = sum;  
@@ -71,10 +87,12 @@ void forward_kernel(const float* Q, const float* K, const float* V, const int N,
                 for (int y = 0; y < block_size_K; y++) {
                     weighted_sum += S[(block_size_K * thread_idx) + y] * Vj[(y * d) + x];
                 }
-                O[qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x] = (1 / new_l) * 
-                    ((prev_l * __expf(prev_m - new_m) * O[qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x]) + 
+                __syncthreads();
+                int index = qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d ) + x;
+                O[index] = (1 / new_l) * 
+                    ((prev_l * __expf(prev_m - new_m) * O[index]) + 
                     (__expf(row_max - new_m) * weighted_sum));
-                // printf("O access: %d\n", qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x);
+                // printf("O access after update: %d\n", index);
             }
 
             m[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx] = new_m;
@@ -88,6 +106,7 @@ extern "C" {
 void launch_flashattention_forward(float *Q, float* K, float *V, float *O, float *l, float *m, int batch_size, int num_heads, int N, int d) {
 
     int block_size_K, block_size_Q;
+    printf("N: %d\n", N);
 
     if (d <= 64) {
         block_size_K = min(N, 32); block_size_Q = min(N, 32);
@@ -100,8 +119,19 @@ void launch_flashattention_forward(float *Q, float* K, float *V, float *O, float
     }
 
 
+
     const int num_tiles_K = ceil((float)N / block_size_K); 
     const int num_tiles_Q = ceil((float)N / block_size_Q);
+
+    // printf("Q[0]: %f\n", Q[0]);
+    // printf("Q[1]: %f\n", Q[1]);
+    // printf("Q[2]: %f\n", Q[2]);
+    // printf("Q[3]: %f\n", Q[3]);
+    // printf("Q[4]: %f\n", Q[4]);
+    // printf("Q[5]: %f\n", Q[5]);
+    // printf("Q[6]: %f\n", Q[6]);
+    // printf("Q[7]: %f\n", Q[7]);
+
 
     const float softmax_scale = 1.0 / sqrt(d);
 
@@ -119,6 +149,7 @@ void launch_flashattention_forward(float *Q, float* K, float *V, float *O, float
     cudaMemcpy(d_Q, Q, Q_size * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_K, K, Q_size * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_V, V, Q_size * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_O, O, Q_size * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_l, l, l_size * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_m, m, l_size * sizeof(float), cudaMemcpyHostToDevice);
 
@@ -155,6 +186,7 @@ __global__
 void forward_kernel_causal(const float* Q, const float* K, const float* V, const int N, const int d,
                               const int num_tiles_K, const int num_tiles_Q, const int block_size_K, const int block_size_Q, 
                               const float softmax_scale, float* l, float *m, float* O) {
+    
     int thread_idx = threadIdx.x;
     int batch_idx = blockIdx.x; 
     int head_idx = blockIdx.y;  
@@ -163,47 +195,56 @@ void forward_kernel_causal(const float* Q, const float* K, const float* V, const
     int lm_offset = (batch_idx * gridDim.y * N) + (head_idx * N);  
 
     extern __shared__ float shared_memory[];
-    int tile_size = block_size_K * d;  
-    float* Qi = shared_memory;        
-    float* Kj = &shared_memory[tile_size];  
-    float* Vj = &shared_memory[tile_size * 2];  
-    float* S = &shared_memory[tile_size * 3];  
+    int tile_size = block_size_K * d;
+    float* Qi = shared_memory;
+    float* Kj = &shared_memory[tile_size];
+    float* Vj = &shared_memory[tile_size * 2];
+    float* S = &shared_memory[tile_size * 3];
+    
 
     for (int tile_idx_K = 0; tile_idx_K < num_tiles_K; tile_idx_K++) {
         for (int x = 0; x < d; x++) {
             Kj[(thread_idx * d) + x] = K[qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x];
             Vj[(thread_idx * d) + x] = V[qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x];
-            // printf("K and V access: %d\n", qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x);
         }
-        __syncthreads();  
+        __syncthreads();
 
-        for (int tile_idx_Q = 0; tile_idx_Q < num_tiles_Q; tile_idx_Q++)  {
+        for (int tile_idx_Q = tile_idx_K; tile_idx_Q < num_tiles_Q; tile_idx_Q++)  {
+            if (tile_idx_Q * block_size_Q + thread_idx >= N)
+                break;
 
             for (int x = 0; x < d; x++) {
                 Qi[(thread_idx * d) + x] = Q[qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x];
-                // printf("Q access: %d\n", qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x);
             }
 
             float prev_m = m[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx];
             float prev_l = l[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx];
-            // printf("m and l access: %d\n", lm_offset + (block_size_Q * tile_idx_Q) + thread_idx);
 
             float row_max = -INFINITY;
             for (int y = 0; y < block_size_K; y++) {
+                if (tile_idx_K * block_size_K + y >= N)
+                    break;
                 float sum = 0;
                 for (int x = 0; x < d; x++) {
                     sum += Qi[(thread_idx * d) + x] * Kj[(y * d) + x];
                 }
-                sum *= softmax_scale; 
+                sum *= softmax_scale;
+                if (tile_idx_Q * block_size_Q + thread_idx < tile_idx_K * block_size_K + y)
+                    sum = -INFINITY;
                 S[(block_size_K * thread_idx) + y] = sum;
 
                 if (sum > row_max)
-                    row_max = sum;  
+                    row_max = sum;
             }
 
             float row_sum = 0;
             for (int y = 0; y < block_size_K; y++) {
-                S[(block_size_K * thread_idx) + y] = __expf(S[(block_size_K * thread_idx) + y] - row_max);
+                if (tile_idx_K * block_size_K + y >= N)
+                    break;
+                if (tile_idx_Q * block_size_Q + thread_idx < tile_idx_K * block_size_K + y)
+                    S[(block_size_K * thread_idx) + y] = 0;
+                else
+                    S[(block_size_K * thread_idx) + y] = __expf(S[(block_size_K * thread_idx) + y] - row_max);
                 row_sum += S[(block_size_K * thread_idx) + y];
             }
 
@@ -213,18 +254,18 @@ void forward_kernel_causal(const float* Q, const float* K, const float* V, const
             for (int x = 0; x < d; x++) {
                 float weighted_sum = 0;
                 for (int y = 0; y < block_size_K; y++) {
+                    if (tile_idx_K * block_size_K + y >= N)
+                        break;
                     weighted_sum += S[(block_size_K * thread_idx) + y] * Vj[(y * d) + x];
                 }
-                O[qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x] = (1 / new_l) * 
-                    ((prev_l * __expf(prev_m - new_m) * O[qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x]) + 
+                O[qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x] = (1 / new_l) *
+                    ((prev_l * __expf(prev_m - new_m) * O[qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x]) +
                     (__expf(row_max - new_m) * weighted_sum));
-                // printf("O access: %d\n", qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x);
             }
-
             m[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx] = new_m;
             l[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx] = new_l;
         }
-        __syncthreads();  
+        __syncthreads();
     }
 }
 
@@ -260,7 +301,7 @@ void launch_flashattention_forward_causal(float *Q, float* K, float *V, float *O
     cudaMalloc((void **)&d_l, l_size * sizeof(float));
     cudaMalloc((void **)&d_m, l_size * sizeof(float));
 
-    cudaMemcpy(d_Q, Q, Q_size * sizeof(float), cudaMemcpyHostToDevice);
+    // cudaMemcpy(d_Q, Q, Q_size * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_K, K, Q_size * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_V, V, Q_size * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_l, l, l_size * sizeof(float), cudaMemcpyHostToDevice);

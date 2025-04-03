@@ -604,15 +604,19 @@ class CudaKernelOps(TensorOps):
 
     @staticmethod
     def flash_attention_fw(Q: Tensor, K: Tensor, V: Tensor):  
-
+        # print(Q._tensor._storage)
         l = Q.zeros((Q.shape[0], Q.shape[1], Q.shape[2]))
 
+        # print(Q._tensor._storage)
         B = Q.shape[0]
         nh = Q.shape[1]
         N = Q.shape[2]
         d = Q.shape[3]
         O = Q.zeros((B, nh, N, d))
-        print("Q_SHAPE: ", Q.shape)
+        # print("cuda kernel ops")
+        # print(Q._tensor._storage)
+        # print(K._tensor._storage)
+        # print(V._tensor._storage)
 
         # l = Q.((Q.shape[0], Q.shape[1], Q.shape[2]))
         # inp_grad = inp.zeros(inp.shape)
@@ -662,7 +666,11 @@ class CudaKernelOps(TensorOps):
         N = Q.shape[2]
         d = Q.shape[3]
 
-        print("Q_SHAPE: ", Q.shape)
+        # # print("Q_SHAPE: ", Q.shape)
+        # print("cuda kernel ops")
+        # print(Q._tensor._storage)
+        # print(K._tensor._storage)
+        # print(V._tensor._storage)
 
         # l = Q.((Q.shape[0], Q.shape[1], Q.shape[2]))
         # inp_grad = inp.zeros(inp.shape)

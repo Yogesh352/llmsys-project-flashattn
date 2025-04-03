@@ -466,6 +466,8 @@ class FlashAttention(Function):
     @staticmethod
     def forward(ctx: Context, Q: Tensor, K: Tensor, V: Tensor) -> Tensor:
         #   BEGIN ASSIGN3_2
+        # print("IN FORWARD")
+        # print(Q._tensor._storage)
         O = Q.f.flash_attention_fw(Q, K, V)
         return O
 
