@@ -6,9 +6,9 @@
 #SBATCH --output=<output_path>  # Path to store output logs
 
 # Activate conda environment
-source ~/.bashrc
-eval "$(conda shell.bash hook)"
-conda activate minitorch
+# source ~/.bashrc
+# eval "$(conda shell.bash hook)"
+# conda activate minitorch
 
 # pip install pycuda
 
@@ -17,14 +17,16 @@ conda activate minitorch
 # pip install -e .
 
 # Check GPU availability
-nvidia-smi
+# nvidia-smi
 
 # # Change directory to the project directory
-cd $PROJECT/project/llmsys-project-flashattn
+# cd $PROJECT/project/llmsys-project-flashattn
 
 bash compile_cuda.sh
 
 python -m pytest tests/test_flash_attention.py
+
+# python tests/speed_test_flash_attention.py
 
 # python kernel_tests/test_softmax_fw.py
 
