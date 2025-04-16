@@ -89,7 +89,8 @@ class MultiHeadAttention(Module):
 
         k = self.k_projection(x.view(*(batch_size * seq_len, n_embd)))
         k = k.view(*(batch_size, seq_len, self.n_head, self.attn_hidden_dim))
-        kT = k.permute(0, 2, 3, 1)
+        k = k.permute(0, 2, 1, 3)
+        kT = k.permute(0, 1, 3, 2)
         # kT = k
 
         v = self.v_projection(x.view(*(batch_size * seq_len, n_embd)))
@@ -101,7 +102,7 @@ class MultiHeadAttention(Module):
         # print(k)
         # print(v)
 
-        return q, kT, v
+        return q,k, kT, v
 
     def self_attention(self, q, kT, v):
         """Given q, kT, and v of sizes defined above, return the result of MultiHeadAttention as described in the writeup
@@ -120,7 +121,11 @@ class MultiHeadAttention(Module):
         """
         batch_size, num_head, queries_len, q_dim = q.shape
 
-        _, _, k_dim, _ = kT.shape
+        if self.use_flash_attention:
+            _, _, _, k_dim = kT.shape
+        else:
+            _, _, k_dim, _ = kT.shape
+
         _, _, _, v_dim = v.shape
 
         assert q_dim == k_dim == v_dim
@@ -146,14 +151,14 @@ class MultiHeadAttention(Module):
 
         elif self.use_flash_attention:
             if not self.causal:
-                # print("MODULES TRANSFORMER BEFORE")
-                # print(q._tensor._storage)
-                # print(kT._tensor._storage)
-                # print(v._tensor._storage)
+                print("MODULES TRANSFORMER BEFORE")
+                print(q._tensor._storage)
+                print(kT._tensor._storage)
+                print(v._tensor._storage)
 
-                # print(q)
-                # print(kT)
-                # print(v)
+                print(q)
+                print(kT)
+                print(v)
 
                 result = q.flash_attention(kT, v)
 
@@ -205,10 +210,13 @@ class MultiHeadAttention(Module):
         """
         batch_size, seq_len, n_embd = x.shape
         # COPY FROM ASSIGN2_4
-        q, kT, v = self.project_to_query_key_value(x)
-     
-            
-        self_attention = self.self_attention(q, kT, v)
+
+        q, k, kT, v = self.project_to_query_key_value(x)
+
+        if self.use_flash_attention:
+            self_attention = self.self_attention(q, k, v)
+        else: 
+            self_attention = self.self_attention(q, kT, v)
 
         return self.out_projection(
             self_attention.view(*(batch_size * seq_len, n_embd))

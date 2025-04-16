@@ -15,7 +15,7 @@ __global__ void forward_kernel(const float *Q, const float *K, const float *V, c
     int head_idx = blockIdx.y;
 
     int qkv_offset = (batch_idx * gridDim.y * N * d) + (head_idx * N * d);
-    int qkv_offset_2 = (batch_idx * gridDim.y * N * d) + (head_idx / gridDim.y * (block_size_K)*d) + (head_idx * d);
+    // int qkv_offset_2 = (batch_idx * gridDim.y * N * d) + (head_idx / gridDim.y * (block_size_K)*d) + (head_idx * d);
     // int qkv_offset_2 = (batch_idx * gridDim.y * N * d) + (block_size_K * thread_idx * gridDim.y * d) + (head_idx * d);
 
     // Offset Calculation
@@ -39,8 +39,8 @@ __global__ void forward_kernel(const float *Q, const float *K, const float *V, c
         for (int x = 0; x < d; x++)
         {
 
-            Kj[(thread_idx * d) + x] = K[qkv_offset_2 + (tile_size * tile_idx_K) + (thread_idx * gridDim.y * d) + x];
-            Vj[(thread_idx * d) + x] = V[qkv_offset_2 + (tile_size * tile_idx_K) + (thread_idx * gridDim.y * d) + x];
+            Kj[(thread_idx * d) + x] = K[qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x];
+            Vj[(thread_idx * d) + x] = V[qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x];
             // printf("Head %d: Key[%d] = %f, Value[%d] = %f, qkv_offset = %d\n", head_idx, qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x, Kj[(thread_idx * d) + x],
             // qkv_offset + (tile_size * tile_idx_K) + (thread_idx * gridDim.y * d) + x, Vj[(thread_idx * d) + x], qkv_offset);
             // printf("ADDITIONAL ON TOP OF OFFSET = %d\n",   (thread_idx * gridDim.y * d));
@@ -54,7 +54,7 @@ __global__ void forward_kernel(const float *Q, const float *K, const float *V, c
 
             for (int x = 0; x < d; x++)
             {
-                Qi[(thread_idx * d) + x] = Q[qkv_offset_2 + (tile_size * tile_idx_Q) + (thread_idx * d * gridDim.y) + x];
+                Qi[(thread_idx * d) + x] = Q[qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x];
                 // printf("Head %d: Query[%d] = %f\n", head_idx, qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x,  Qi[(thread_idx * d) + x]);
 
                 // printf("Q access: %d\n", qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x);
@@ -122,6 +122,7 @@ extern "C"
 
         int block_size_K, block_size_Q;
         // printf("N: %d\n", N);
+        block_size_K = min(N, 2048/d); block_size_Q = min(N, 2048/d);
 
         // if (d <= 64) {
         //     block_size_K = min(N, 32); block_size_Q = min(N, 32);
@@ -133,8 +134,8 @@ extern "C"
         //     block_size_K = min(N, 4); block_size_Q = min(N, 4);
         // }
 
-        // int max_sram_size;
-        // cudaDeviceGetAttribute(&max_sram_size, cudaDevAttrMaxSharedMemoryPerBlock, 0);
+        int max_sram_size;
+        cudaDeviceGetAttribute(&max_sram_size, cudaDevAttrMaxSharedMemoryPerBlock, 0);
 
         // int sram_size = max_sram_size;
 
@@ -156,10 +157,10 @@ extern "C"
         // Block Size (K,V) = min(M / 4d, d)
 
         // Set according to your GPU
-        int sram_size = 8192;
+        int sram_size = 8192/4;
 
-        block_size_K = min(sram_size / (4 * d), N);
-        block_size_Q = min(sram_size / (4 * d), d);
+        // block_size_K = min(sram_size / (4 * d), N);
+        // block_size_Q = min(sram_size / (4 * d), d);
 
         const int num_tiles_K = ceil((float)N / block_size_K);
         const int num_tiles_Q = ceil((float)N / block_size_Q);
@@ -195,7 +196,7 @@ extern "C"
 
         const int shared_mem_size = (3 * block_size_K * d * sizeof(float)) + (block_size_K * block_size_Q * sizeof(float));
 
-        // printf("d: %d | num_head: %d | N: %d | Block Size Q: %d | Block Size K: %d | Max shared memory: %d, requested shared memory: %d \n", d, num_heads, N, block_size_Q, block_size_K, max_sram_size, shared_mem_size);
+        printf("d: %d | num_head: %d | N: %d | Block Size Q: %d | Block Size K: %d | Max shared memory: %d, requested shared memory: %d \n", d, num_heads, N, block_size_Q, block_size_K, max_sram_size, shared_mem_size);
 
         // if (shared_mem_size >= max_sram_size) {
         //     fprintf(stderr, "Too much SRAM requested: %f\n", shared_mem_size);
