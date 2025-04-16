@@ -124,64 +124,14 @@ extern "C"
 
         // TODO: Optimise memory usage for lower d, low hanging fruit for those that can be 4x
 
-        // OPTION 1: Assume too large d is dealt with + SRAM >= 32768
-        block_size_K = min(N, 2048/d); block_size_Q = min(N, 2048/d);
+        // Assume SRAM >= 32768
+        if (d>2048) return;
 
-        // // OPTION 2: Deal with too large d + SRAM >= 32768
-        // if (d <= 64) {
-        //     block_size_K = min(N, 32); block_size_Q = min(N, 32);
-        // } else if (d <= 128) {
-        //     block_size_K = min(N, 16); block_size_Q = min(N, 16);
-        // } else if (d <= 256) {
-        //     block_size_K = min(N, 8); block_size_Q = min(N, 8);
-        // } else if (d <= 512) {
-        //     block_size_K = min(N, 4); block_size_Q = min(N, 4);
-        // } else if (d <= 1024) {
-        //     block_size_K = min(N, 2); block_size_Q = min(N, 2);
-        // } else if (d <= 2048) {
-        //     block_size_K = 1; block_size_Q = 1;
-        // } else {
-        //     return;
-        // }
+        block_size_K = min(min(N, 2048/d), 64); block_size_Q = min(min(N, 2048/d), 64);
 
-
-        // // OPTION 3: Deal with too large d + any SRAM
-        // // M = SRAM size
-        // // Block Size (Q) = M / 4d
-        // // Block Size (K,V) = min(M / 4d, d)
-        // int max_sram_size;
-        // cudaDeviceGetAttribute(&max_sram_size, cudaDevAttrMaxSharedMemoryPerBlock, 0);
-
-        // int sram_size = max_sram_size;
-
-        // // Compute the largest power of 2 <= num
-        // sram_size |= (sram_size >> 1);
-        // sram_size |= (sram_size >> 2);
-        // sram_size |= (sram_size >> 4);
-        // sram_size |= (sram_size >> 8);
-        // sram_size |= (sram_size >> 16);
-        // sram_size = (sram_size + 1) >> 1;
-
-        // sram_size /= sizeof(float);
-
-        // if (d * 4 > sram_size) {
-        //     return;
-        // }
-
-        // block_size_K = min(sram_size / (4 * d), N);
-        // block_size_Q = min(sram_size / (4 * d), N);
 
         const int num_tiles_K = ceil((float)N / block_size_K);
         const int num_tiles_Q = ceil((float)N / block_size_Q);
-
-        // printf("Q[0]: %f\n", Q[0]);
-        // printf("Q[1]: %f\n", Q[1]);
-        // printf("Q[2]: %f\n", Q[2]);
-        // printf("Q[3]: %f\n", Q[3]);
-        // printf("Q[4]: %f\n", Q[4]);
-        // printf("Q[5]: %f\n", Q[5]);
-        // printf("Q[6]: %f\n", Q[6]);
-        // printf("Q[7]: %f\n", Q[7]);
 
         const float softmax_scale = 1.0 / sqrt(d);
 
