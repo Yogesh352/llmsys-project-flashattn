@@ -22,9 +22,9 @@ _BACKENDS = [
 
 
 @pytest.mark.parametrize("batch_size", [2**i for i in range(1)])
-@pytest.mark.parametrize("queries_len", [2**i for i in range(5, 13)])
-@pytest.mark.parametrize("n_embd", [2**i for i in range(6, 7)])
-@pytest.mark.parametrize("num_heads", [2**i for i in range(1)])
+@pytest.mark.parametrize("queries_len", [2**i for i in range(5, 6)])
+@pytest.mark.parametrize("n_embd", [2**i for i in range(6, 14)]) # Works up to 8192, i.e. 2**13
+@pytest.mark.parametrize("num_heads", [2**i for i in range(3)])
 @pytest.mark.parametrize("p_dropout", [0.0])
 @pytest.mark.parametrize("backend", _BACKENDS, ids=["CudaKernelOps"])
 def test_multihead_attention_flash_attention(

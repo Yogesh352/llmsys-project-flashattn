@@ -121,58 +121,17 @@ extern "C"
     {
 
         int block_size_K, block_size_Q;
-        // printf("N: %d\n", N);
-        block_size_K = min(N, 2048/d); block_size_Q = min(N, 2048/d);
 
-        // if (d <= 64) {
-        //     block_size_K = min(N, 32); block_size_Q = min(N, 32);
-        // } else if (d <= 128) {
-        //     block_size_K = min(N, 16); block_size_Q = min(N, 16);
-        // } else if (d <= 256) {
-        //     block_size_K = min(N, 8); block_size_Q = min(N, 8);
-        // } else if (d <= 512) {
-        //     block_size_K = min(N, 4); block_size_Q = min(N, 4);
-        // }
+        // TODO: Optimise memory usage for lower d, low hanging fruit for those that can be 4x
 
-        int max_sram_size;
-        cudaDeviceGetAttribute(&max_sram_size, cudaDevAttrMaxSharedMemoryPerBlock, 0);
+        // Assume SRAM >= 32768
+        if (d>2048) return;
 
-        // int sram_size = max_sram_size;
+        block_size_K = min(min(N, 2048/d), 64); block_size_Q = min(min(N, 2048/d), 64);
 
-        // Compute the largest power of 2 <= num
-        // sram_size |= (sram_size >> 1);
-        // sram_size |= (sram_size >> 2);
-        // sram_size |= (sram_size >> 4);
-        // sram_size |= (sram_size >> 8);
-        // sram_size |= (sram_size >> 16);
-        // sram_size = (sram_size + 1) >> 1;
-
-        // sram_size /= sizeof(float);
-
-        // Accounting for overhead
-        // sram_size *= 0.7;
-
-        // M = SRAM size
-        // Block Size (Q) = M / 4d
-        // Block Size (K,V) = min(M / 4d, d)
-
-        // Set according to your GPU
-        int sram_size = 8192/4;
-
-        // block_size_K = min(sram_size / (4 * d), N);
-        // block_size_Q = min(sram_size / (4 * d), d);
 
         const int num_tiles_K = ceil((float)N / block_size_K);
         const int num_tiles_Q = ceil((float)N / block_size_Q);
-
-        // printf("Q[0]: %f\n", Q[0]);
-        // printf("Q[1]: %f\n", Q[1]);
-        // printf("Q[2]: %f\n", Q[2]);
-        // printf("Q[3]: %f\n", Q[3]);
-        // printf("Q[4]: %f\n", Q[4]);
-        // printf("Q[5]: %f\n", Q[5]);
-        // printf("Q[6]: %f\n", Q[6]);
-        // printf("Q[7]: %f\n", Q[7]);
 
         const float softmax_scale = 1.0 / sqrt(d);
 
@@ -194,13 +153,17 @@ extern "C"
         cudaMemcpy(d_l, l, l_size * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(d_m, m, l_size * sizeof(float), cudaMemcpyHostToDevice);
 
-        const int shared_mem_size = (3 * block_size_K * d * sizeof(float)) + (block_size_K * block_size_Q * sizeof(float));
+        const int shared_mem_size = (2 * block_size_K * d * sizeof(float)) + (block_size_Q * d * sizeof(float)) + (block_size_K * block_size_Q * sizeof(float)) + (2 * block_size_K * sizeof(float));
 
-        printf("d: %d | num_head: %d | N: %d | Block Size Q: %d | Block Size K: %d | Max shared memory: %d, requested shared memory: %d \n", d, num_heads, N, block_size_Q, block_size_K, max_sram_size, shared_mem_size);
+        // Uncomment if you want to see SRAM requested
+        // printf("d: %d | num_head: %d | N: %d | Block Size Q: %d | Block Size K: %d | Max shared memory: %d, requested shared memory: %d \n", d, num_heads, N, block_size_Q, block_size_K, max_sram_size, shared_mem_size);
 
+        // // This should never run if your code checks for too large d
         // if (shared_mem_size >= max_sram_size) {
-        //     fprintf(stderr, "Too much SRAM requested: %f\n", shared_mem_size);
-        //     exit(EXIT_FAILURE);
+        //     // fprintf(stderr, "Too much SRAM requested: %f\n", shared_mem_size);
+        //     // exit(EXIT_FAILURE);
+        //     // printf("Too much SRAM requested: %d\n", shared_mem_size);
+        //     return;
         // }
 
         dim3 grid_dim(batch_size, num_heads);
