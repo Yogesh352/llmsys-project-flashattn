@@ -151,14 +151,14 @@ class MultiHeadAttention(Module):
 
         elif self.use_flash_attention:
             if not self.causal:
-                print("MODULES TRANSFORMER BEFORE")
-                print(q._tensor._storage)
-                print(kT._tensor._storage)
-                print(v._tensor._storage)
+                # print("MODULES TRANSFORMER BEFORE")
+                # print(q._tensor._storage)
+                # print(kT._tensor._storage)
+                # print(v._tensor._storage)
 
-                print(q)
-                print(kT)
-                print(v)
+                # print(q)
+                # print(kT)
+                # print(v)
 
                 result = q.flash_attention(kT, v)
 
@@ -214,6 +214,10 @@ class MultiHeadAttention(Module):
         q, k, kT, v = self.project_to_query_key_value(x)
 
         if self.use_flash_attention:
+            # There is an upper limit to the per-head dimension that current GPUs (V100, H100) can support.
+            if self.n_embd/self.n_head > 2048:
+                print("Please reduce n_embd or increase n_head")
+                return None
             self_attention = self.self_attention(q, k, v)
         else: 
             self_attention = self.self_attention(q, kT, v)
