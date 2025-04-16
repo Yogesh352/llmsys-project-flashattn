@@ -641,6 +641,23 @@ class CudaKernelOps(TensorOps):
 
         lib_flashattention.launch_flashattention_forward.restype = None
 
+        print("Q CHARACTERISTICS")
+        print(Q._tensor.shape)
+        print(Q)
+        print(Q._tensor.is_contiguous())
+        Q = Q.contiguous()
+        K = K.contiguous()
+        V = V.contiguous()
+        # V = V.contiguous()
+        print(Q._tensor.is_contiguous())
+        # Q_fixed = TensorData(Q._tensor._storage.copy(), Q.shape)
+        # print(Q_fixed._tensor.strides)
+
+        print(Q._tensor._storage[0])
+        print(Q._tensor._storage[1])
+        print(Q._tensor._storage[2])
+        print(Q._tensor._storage[3])
+
         lib_flashattention.launch_flashattention_forward(
             Q._tensor._storage,
             K._tensor._storage,
@@ -694,7 +711,9 @@ class CudaKernelOps(TensorOps):
         ]
 
         lib_flashattention.launch_flashattention_forward_causal.restype = None
-
+        # print("Q CHARACTERISTICS")
+        # print("Q._tensor.shape")
+        # print("Q._tensor.strides")
         lib_flashattention.launch_flashattention_forward_causal(
             Q._tensor._storage,
             K._tensor._storage,
