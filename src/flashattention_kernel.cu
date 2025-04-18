@@ -171,7 +171,6 @@ __global__ void backward_kernel(const float *Q, const float *K, const float *V, 
 
         for (int tile_idx_Q = 0; tile_idx_Q < num_tiles_Q; tile_idx_Q++)
         {
-            __syncthreads();
 
             for (int x = 0; x < d; x++)
             {
