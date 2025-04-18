@@ -99,6 +99,7 @@ class TensorBackend:
         self.layernorm_fw = ops.layernorm_fw
         self.layernorm_bw = ops.layernorm_bw
         self.flash_attention_fw = ops.flash_attention_fw
+        self.flash_attention_bw = ops.flash_attention_bw
         self.flash_attention_causal_fw = ops.flash_attention_causal_fw
         # self.flash_attention_bw = ops.flash_attention_bw
 

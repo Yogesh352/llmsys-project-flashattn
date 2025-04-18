@@ -57,6 +57,7 @@ class MultiHeadAttention(Module):
         self.v_projection = Linear(self.n_embd, self.n_embd, bias, backend)
         self.out_projection = Linear(self.n_embd, self.n_embd, bias, backend)
         self.dropout = Dropout(p_dropout)
+        self.use_fused_kernel = use_fused_kernel
         self.use_flash_attention = use_flash_attention
 
     def create_causal_mask(self, bs, nh, seq_len):
@@ -67,7 +68,7 @@ class MultiHeadAttention(Module):
         mask = -np.finfo(datatype).max * np.triu(
             np.ones((bs, nh, seq_len, seq_len), dtype=datatype), 1
         )  # Correct version for Assignment 3.
-        return tensor_from_numpy(mask, backend=self.backend)
+        return tensor_from_numpy(mask, backend=self.backend, requires_grad=True)
 
     def project_to_query_key_value(self, x):
         """Project x to Q, transpose of K, V for self attention
@@ -89,8 +90,9 @@ class MultiHeadAttention(Module):
 
         k = self.k_projection(x.view(*(batch_size * seq_len, n_embd)))
         k = k.view(*(batch_size, seq_len, self.n_head, self.attn_hidden_dim))
+        kT = k.permute(0, 2, 3, 1)
         k = k.permute(0, 2, 1, 3)
-        kT = k.permute(0, 1, 3, 2)
+        # kT = k
         # kT = k
 
         v = self.v_projection(x.view(*(batch_size * seq_len, n_embd)))
@@ -102,7 +104,7 @@ class MultiHeadAttention(Module):
         # print(k)
         # print(v)
 
-        return q,k, kT, v
+        return q, k, kT, v
 
     def self_attention(self, q, kT, v):
         """Given q, kT, and v of sizes defined above, return the result of MultiHeadAttention as described in the writeup
@@ -132,20 +134,20 @@ class MultiHeadAttention(Module):
         result = None
 
         if self.use_fused_kernel:
+
             if self.causal:
                 ### BEGIN YOUR SOLUTION
-                result = (
-                    q.attn_softmax(
-                        (q @ kT) / (self.attn_hidden_dim**0.5)
-                        + self.create_causal_mask(batch_size, num_head, queries_len),
-                        dim=3,
-                    )
-                    @ v
-                )
+                result = ((q @ kT) / (self.attn_hidden_dim**0.5)).attn_softmax(
+                    self.create_causal_mask(batch_size, num_head, queries_len)
+                ) @ v
             else:
-                result = (
-                    q.attn_softmax((q @ kT) / (self.attn_hidden_dim**0.5), dim=3) @ v
-                )
+                result = ((q @ kT) / (self.attn_hidden_dim**0.5)).attn_softmax(
+                    tensor_from_numpy(
+                        np.ones((1, 1, queries_len, queries_len)),
+                        backend=self.backend,
+                        requires_grad=True,
+                    )
+                ) @ v
 
             ### END YOUR SOLUTION
 
@@ -215,11 +217,11 @@ class MultiHeadAttention(Module):
 
         if self.use_flash_attention:
             # There is an upper limit to the per-head dimension that current GPUs (V100, H100) can support.
-            if self.n_embd/self.n_head > 2048:
+            if self.n_embd / self.n_head > 2048:
                 print("Please reduce n_embd or increase n_head")
                 return None
             self_attention = self.self_attention(q, k, v)
-        else: 
+        else:
             self_attention = self.self_attention(q, kT, v)
 
         return self.out_projection(

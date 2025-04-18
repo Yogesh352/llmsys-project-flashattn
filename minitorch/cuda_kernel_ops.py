@@ -603,7 +603,7 @@ class CudaKernelOps(TensorOps):
         #   END ASSIGN3_2
 
     @staticmethod
-    def flash_attention_fw(Q: Tensor, K: Tensor, V: Tensor):  
+    def flash_attention_fw(Q: Tensor, K: Tensor, V: Tensor):
         # print(Q._tensor._storage)
         l = Q.zeros((Q.shape[0], Q.shape[1], Q.shape[2]))
 
@@ -641,22 +641,22 @@ class CudaKernelOps(TensorOps):
 
         lib_flashattention.launch_flashattention_forward.restype = None
 
-        print("Q CHARACTERISTICS")
-        print(Q._tensor.shape)
-        print(Q)
-        print(Q._tensor.is_contiguous())
+        # print("Q CHARACTERISTICS")
+        # print(Q._tensor.shape)
+        # print(Q)
+        # print(Q._tensor.is_contiguous())
         Q = Q.contiguous()
         K = K.contiguous()
         V = V.contiguous()
         # V = V.contiguous()
-        print(Q._tensor.is_contiguous())
+        # print(Q._tensor.is_contiguous())
         # Q_fixed = TensorData(Q._tensor._storage.copy(), Q.shape)
         # print(Q_fixed._tensor.strides)
 
-        print(Q._tensor._storage[0])
-        print(Q._tensor._storage[1])
-        print(Q._tensor._storage[2])
-        print(Q._tensor._storage[3])
+        # print(Q._tensor._storage[0])
+        # print(Q._tensor._storage[1])
+        # print(Q._tensor._storage[2])
+        # print(Q._tensor._storage[3])
 
         lib_flashattention.launch_flashattention_forward(
             Q._tensor._storage,
@@ -671,7 +671,91 @@ class CudaKernelOps(TensorOps):
             d,
         )
 
-        return O
+        return O, m, l
+
+    @staticmethod
+    def flash_attention_bw(
+        Q: Tensor, K: Tensor, V: Tensor, O: Tensor, dO: Tensor, m: Tensor, l: Tensor
+    ):
+        # print(Q._tensor._storage)
+        # print("I REACHED BACKWARD IN CUDA KERNEL OPS")
+        # l = Q.zeros((Q.shape[0], Q.shape[1], Q.shape[2]))
+
+        # print(Q._tensor._storage)
+        B = Q.shape[0]
+        nh = Q.shape[1]
+        N = Q.shape[2]
+        d = Q.shape[3]
+        dQ = Q.zeros((B, nh, N, d))
+        dK = Q.zeros((B, nh, N, d))
+        dV = Q.zeros((B, nh, N, d))
+        # print("cuda kernel ops")
+        # print(Q._tensor._storage)
+        # print(K._tensor._storage)
+        # print(V._tensor._storage)
+
+        # l = Q.((Q.shape[0], Q.shape[1], Q.shape[2]))
+        # inp_grad = inp.zeros(inp.shape)
+
+        # m = tensor_from_numpy(
+        #     np.full((B, nh, N), -np.inf),
+        #     backend=Q.backend,
+        #     requires_grad=True,
+        # )
+        lib_flashattention.launch_flashattention_backward.argtypes = [
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+        ]
+
+        lib_flashattention.launch_flashattention_backward.restype = None
+
+        # print("Q CHARACTERISTICS")
+        # print(Q._tensor.shape)
+        # print(Q)
+        # print(Q._tensor.is_contiguous())
+        Q = Q.contiguous()
+        K = K.contiguous()
+        V = V.contiguous()
+        # V = V.contiguous()
+        # print(Q._tensor.is_contiguous())
+        # Q_fixed = TensorData(Q._tensor._storage.copy(), Q.shape)
+        # print(Q_fixed._tensor.strides)
+
+        # print(Q._tensor._storage[0])
+        # print(Q._tensor._storage[1])
+        # print(Q._tensor._storage[2])
+        # print(Q._tensor._storage[3])
+
+        lib_flashattention.launch_flashattention_backward(
+            Q._tensor._storage,
+            K._tensor._storage,
+            V._tensor._storage,
+            O._tensor._storage,
+            dQ._tensor._storage,
+            dK._tensor._storage,
+            dV._tensor._storage,
+            dO._tensor._storage,
+            l._tensor._storage,
+            m._tensor._storage,
+            B,
+            nh,
+            N,
+            d,
+        )
+
+        return dQ, dK, dV
 
     @staticmethod
     def flash_attention_causal_fw(Q: Tensor, K: Tensor, V: Tensor):
