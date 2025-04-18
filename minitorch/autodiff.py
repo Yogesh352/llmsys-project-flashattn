@@ -102,23 +102,23 @@ def topological_sort(variable: Variable) -> Iterable[Variable]:
     """
     # BEGIN ASSIGN1_1
     # TODO
-    
+
     visited = set()
     topological_order = []
 
     def dfs(current_var):
         if current_var.unique_id in visited:
             return
-        
+
         visited.add(current_var.unique_id)
 
         try:
             parents = current_var.parents
             for parent in parents:
-              dfs(parent)
+                dfs(parent)
 
             if not current_var.is_constant():
-              topological_order.insert(0,current_var)
+                topological_order.insert(0, current_var)
         except:
             return
 
@@ -140,17 +140,38 @@ def backpropagate(variable: Variable, deriv: Any) -> None:
     """
     # BEGIN ASSIGN1_1
     # TODO
-   
-    def propagate(variable, deriv):
-      if variable.is_leaf():
-        variable.accumulate_derivative(deriv)
-      try:
-        for parent, new_deriv in variable.chain_rule(deriv):
-          propagate(parent, new_deriv)
-      except:
-        return
-    
-    propagate(variable, deriv)
+
+    topo_order = topological_sort(variable)
+
+    derivative_map = {var.unique_id: 0.0 for var in topo_order}
+
+    derivative_map[variable.unique_id] = deriv
+
+    for var in topo_order:
+        d_output = derivative_map[var.unique_id]
+
+        if var.is_leaf():
+            continue
+        for parent, d_parent in var.chain_rule(d_output):
+            if parent.unique_id in derivative_map:
+                derivative_map[parent.unique_id] += d_parent
+            else:
+                derivative_map[parent.unique_id] = d_parent
+
+    for var in topo_order:
+        if var.is_leaf():
+            var.accumulate_derivative(derivative_map[var.unique_id])
+
+    # def propagate(variable, deriv):
+    #   if variable.is_leaf():
+    #     variable.accumulate_derivative(deriv)
+    #   try:
+    #     for parent, new_deriv in variable.chain_rule(deriv):
+    #       propagate(parent, new_deriv)
+    #   except:
+    #     return
+
+    # propagate(variable, deriv)
     # END ASSIGN1_1
 
 
