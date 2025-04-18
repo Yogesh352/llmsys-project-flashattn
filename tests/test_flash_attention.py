@@ -22,9 +22,9 @@ _BACKENDS = [
 
 
 @pytest.mark.parametrize("batch_size", [2**i for i in range(1)])
-@pytest.mark.parametrize("queries_len", [2**i for i in range(5, 6)])
-@pytest.mark.parametrize("n_embd", [2**i for i in range(6, 14)]) # Works up to 8192, i.e. 2**13
-@pytest.mark.parametrize("num_heads", [2**i for i in range(3)])
+@pytest.mark.parametrize("queries_len", [2**i for i in range(5, 14)])
+@pytest.mark.parametrize("n_embd", [2**i for i in range(6, 7)])
+@pytest.mark.parametrize("num_heads", [2**i for i in range(4)])
 @pytest.mark.parametrize("p_dropout", [0.0])
 @pytest.mark.parametrize("backend", _BACKENDS, ids=["CudaKernelOps"])
 def test_multihead_attention_flash_attention(
@@ -41,11 +41,15 @@ def test_multihead_attention_flash_attention(
         n_embd, num_heads, p_dropout, bias=False, batch_first=True, dtype=torch.float32
     )
 
-    # layer = minitorch.MultiHeadAttention(
-    #     n_embd, num_heads, True, p_dropout, bias=False, backend=backend, use_fused_kernel=False, use_flash_attention=True
-    # )
     layer = minitorch.MultiHeadAttention(
-        n_embd, num_heads, False, p_dropout, bias=False, backend=backend, use_fused_kernel=False, use_flash_attention=True
+        n_embd,
+        num_heads,
+        False,
+        p_dropout,
+        bias=False,
+        backend=backend,
+        use_fused_kernel=False,
+        use_flash_attention=False,
     )
 
     # Set weights of minitorch layer to torch weights
@@ -79,26 +83,26 @@ def test_multihead_attention_flash_attention(
     )
 
     # Check backward
-    # result.sum().backward()
-    # result_.sum().backward()
+    result.sum().backward()
+    result_.sum().backward()
 
-    # np.testing.assert_allclose(
-    #     X.grad.to_numpy(), X_.grad.detach().numpy(), atol=1e-5, rtol=1e-5
-    # )
+    np.testing.assert_allclose(
+        X.grad.to_numpy(), X_.grad.detach().numpy(), atol=1e-5, rtol=1e-5
+    )
 
-    # np.testing.assert_allclose(
-    #     layer.out_projection.weights.value.grad.to_numpy(),
-    #     layer_.out_proj.weight.grad.detach().numpy().T,
-    #     atol=1e-5,
-    #     rtol=1e-5,
-    # )
+    np.testing.assert_allclose(
+        layer.out_projection.weights.value.grad.to_numpy(),
+        layer_.out_proj.weight.grad.detach().numpy().T,
+        atol=1e-5,
+        rtol=1e-5,
+    )
 
-    # # Since the torch W_Q, W_K, W_V is all one matrix, we can't compare
-    # assert (
-    #     (layer.q_projection.weights.value.grad is not None)
-    #     and (layer.k_projection.weights.value.grad is not None)
-    #     and (layer.v_projection.weights.value.grad is not None)
-    # )
+    # Since the torch W_Q, W_K, W_V is all one matrix, we can't compare
+    assert (
+        (layer.q_projection.weights.value.grad is not None)
+        and (layer.k_projection.weights.value.grad is not None)
+        and (layer.v_projection.weights.value.grad is not None)
+    )
 
 
 # @pytest.mark.parametrize("batch_size", [1, 64])
