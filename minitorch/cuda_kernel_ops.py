@@ -674,7 +674,7 @@ class CudaKernelOps(TensorOps):
         return O
 
     @staticmethod
-    def flash_attention_causal_fw(Q: Tensor, K: Tensor, V: Tensor):
+    def flash_attention_causal_fw(Q: Tensor, K: Tensor, V: Tensor, mask:Tensor):
         O = Q.zeros((Q.shape))
         l = Q.zeros((Q.shape[0], Q.shape[1], Q.shape[2]))
 
@@ -683,21 +683,14 @@ class CudaKernelOps(TensorOps):
         N = Q.shape[2]
         d = Q.shape[3]
 
-        # # print("Q_SHAPE: ", Q.shape)
-        # print("cuda kernel ops")
-        # print(Q._tensor._storage)
-        # print(K._tensor._storage)
-        # print(V._tensor._storage)
-
-        # l = Q.((Q.shape[0], Q.shape[1], Q.shape[2]))
-        # inp_grad = inp.zeros(inp.shape)
-
         m = tensor_from_numpy(
             np.full((Q.shape[0], Q.shape[1], Q.shape[2]), -np.inf),
             backend=Q.backend,
             requires_grad=True,
         )
+
         lib_flashattention.launch_flashattention_forward_causal.argtypes = [
+            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
             np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
             np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
             np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
@@ -711,9 +704,7 @@ class CudaKernelOps(TensorOps):
         ]
 
         lib_flashattention.launch_flashattention_forward_causal.restype = None
-        # print("Q CHARACTERISTICS")
-        # print("Q._tensor.shape")
-        # print("Q._tensor.strides")
+        
         lib_flashattention.launch_flashattention_forward_causal(
             Q._tensor._storage,
             K._tensor._storage,
@@ -721,6 +712,7 @@ class CudaKernelOps(TensorOps):
             O._tensor._storage,
             l._tensor._storage,
             m._tensor._storage,
+            mask._tensor._storage,
             B,
             nh,
             N,

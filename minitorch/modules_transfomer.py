@@ -170,7 +170,8 @@ class MultiHeadAttention(Module):
                 # assert result == result_2
 
             else:
-                result = q.flash_attention_causal(kT, v)
+                mask = self.create_causal_mask(batch_size, num_head, queries_len)
+                result = q.flash_attention_causal(kT, v, mask)
 
         else:
             # BEGIN ASSIGN3_3
