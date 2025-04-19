@@ -105,6 +105,7 @@ class Add(Function):
 
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tuple[Tensor, Tensor]:
+        # print("CALLED IN ADD")
         return grad_output, grad_output
 
 
@@ -302,6 +303,7 @@ class Sum(Function):
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tuple[Tensor, float]:
         a_shape, dim = ctx.saved_values
+        # print("CALLED IN SUM")
         return grad_output, 0.0
 
 
@@ -388,6 +390,7 @@ class View(Function):
 
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tuple[Tensor, float]:
+        # print("CALLED IN VIEW")
         (original,) = ctx.saved_values
         return (
             minitorch.Tensor.make(
@@ -415,6 +418,7 @@ class MatMul(Function):
 
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tuple[Tensor, Tensor]:
+        # print("CALLED HERE?")
         t1, t2 = ctx.saved_values
 
         def transpose(a: Tensor) -> Tensor:
@@ -432,7 +436,8 @@ class Attn_Softmax(Function):
     @staticmethod
     def forward(ctx: Context, inp: Tensor, mask: Tensor) -> Tensor:
         #   BEGIN ASSIGN3_1
-        ctx.save_for_backward(inp)
+        print("INSIDE FORWARD?")
+        ctx.save_for_backward(inp, mask)
         return inp.f.attn_softmax_fw(inp, mask)
         #   END ASSIGN3_1
 
@@ -440,6 +445,8 @@ class Attn_Softmax(Function):
     def backward(ctx: Context, out_grad: Tensor) -> Tensor:
         #   BEGIN ASSIGN3_1
         (inp,) = ctx.saved_values
+        print(inp)
+        print("INSIDE BACKWARD?")
         return out_grad.f.attn_softmax_bw(out_grad, inp)
         #   END ASSIGN3_1
 
@@ -468,15 +475,27 @@ class FlashAttention(Function):
         #   BEGIN ASSIGN3_2
         # print("IN FORWARD")
         # print(Q._tensor._storage)
-        O = Q.f.flash_attention_fw(Q, K, V)
+        O, m, l = Q.f.flash_attention_fw(Q, K, V)
+        ctx.save_for_backward(Q, K , V, O, m, l)
         return O
-
-        #   END ASSIGN3_2
 
     @staticmethod
     def backward(ctx: Context, out_grad: Tensor) -> Tensor:
-        #   BEGIN ASSIGN3_2
-        raise("NOT IMPLEMENTED YET")
+        # print("IN BACKWARD")
+        Q, K, V, O, m, l = ctx.saved_values
+        # print(Q)
+        # print(K)
+        # print(V)
+        # print(O)
+        # print(m)
+        # print(l)
+        # print(out_grad)
+        dQ, dK, dV = out_grad.f.flash_attention_bw(Q, K, V, O, out_grad, m, l)
+        # print(dQ)
+        # print(dK)
+        # print(dV)
+        return dQ, dK, dV
+        # raise("NOT IMPLEMENTED YET")
 
 
 class FlashAttentionCausal(Function):
