@@ -787,6 +787,10 @@ class CudaKernelOps(TensorOps):
         ]
 
         lib_flashattention.launch_flashattention_forward_causal.restype = None
+
+        Q = Q.contiguous()
+        K = K.contiguous()
+        V = V.contiguous()
         
         lib_flashattention.launch_flashattention_forward_causal(
             Q._tensor._storage,
