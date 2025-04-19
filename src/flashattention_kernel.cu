@@ -476,7 +476,7 @@ extern "C"
     }
 }
 
-__global__ void forward_kernel_causal(const float *Q, const float *K, const float *V, const float *mask, const int N, const int d,
+__global__ void forward_kernel_causal(const float *Q, const float *K, const float *V, const int N, const int d,
                                       const int num_tiles_K, const int num_tiles_Q, const int block_size_K, const int block_size_Q,
                                       const float softmax_scale, float *l, float *m, float *O)
 {
@@ -509,7 +509,7 @@ __global__ void forward_kernel_causal(const float *Q, const float *K, const floa
         for (int tile_idx_Q = 0; tile_idx_Q < num_tiles_Q; tile_idx_Q++)
         {
             // Coarse-grained optimisation (Block-level)
-            if (mask[(tile_idx_Q * block_size_Q + thread_idx) * N + (tile_idx_K * block_size_K)] != 0) continue;
+            if (tile_idx_Q < tile_idx_K) continue;
             
             // Load Qi into SRAM, each thread loads Qi+thread_idx concurrently
             for (int x = 0; x < d; x++)
@@ -541,7 +541,7 @@ __global__ void forward_kernel_causal(const float *Q, const float *K, const floa
             float row_sum = 0;
             for (int y = 0; y < block_size_K; y++)
             {
-                if (mask[(tile_idx_Q * block_size_Q + thread_idx) * N + (tile_idx_K * block_size_K) + y] == 0) {
+                if ((tile_idx_Q * block_size_Q + thread_idx) >= (tile_idx_K * block_size_K) + y) {
                     S[(block_size_K * thread_idx) + y] = __expf(S[(block_size_K * thread_idx) + y] - row_max);
                 } else {
                     S[(block_size_K * thread_idx) + y] = 0.0;
@@ -579,7 +579,7 @@ __global__ void forward_kernel_causal(const float *Q, const float *K, const floa
 
 extern "C"
 {
-    void launch_flashattention_forward_causal(float *Q, float *K, float *V, float *O, float *l, float *m, float *mask, int batch_size, int num_heads, int N, int d)
+    void launch_flashattention_forward_causal(float *Q, float *K, float *V, float *O, float *l, float *m, int batch_size, int num_heads, int N, int d)
     {
 
         int block_size_K, block_size_Q;
@@ -593,10 +593,9 @@ extern "C"
 
         const float softmax_scale = 1.0 / sqrt(d);
 
-        float *d_Q, *d_K, *d_V, *d_O, *d_l, *d_m, *d_mask;
+        float *d_Q, *d_K, *d_V, *d_O, *d_l, *d_m;
         const int Q_size = batch_size * num_heads * N * d;
         const int l_size = batch_size * num_heads * N;
-        const int mask_size = N * N;
 
         cudaMalloc((void **)&d_Q, Q_size * sizeof(float));
         cudaMalloc((void **)&d_K, Q_size * sizeof(float));
@@ -604,7 +603,6 @@ extern "C"
         cudaMalloc((void **)&d_O, Q_size * sizeof(float));
         cudaMalloc((void **)&d_l, l_size * sizeof(float));
         cudaMalloc((void **)&d_m, l_size * sizeof(float));
-        cudaMalloc((void **)&d_mask, mask_size * sizeof(float));
 
 
         cudaMemcpy(d_Q, Q, Q_size * sizeof(float), cudaMemcpyHostToDevice);
@@ -612,7 +610,6 @@ extern "C"
         cudaMemcpy(d_V, V, Q_size * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(d_l, l, l_size * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(d_m, m, l_size * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_mask, mask, mask_size * sizeof(float), cudaMemcpyHostToDevice);
 
         const int shared_mem_size = (2 * block_size_K * d * sizeof(float)) + (block_size_Q * d * sizeof(float)) + (block_size_K * block_size_Q * sizeof(float)) + (2 * block_size_K * sizeof(float));
 
@@ -621,7 +618,7 @@ extern "C"
 
         // Launch the kernel
         forward_kernel_causal<<<grid_dim, block_dim, shared_mem_size>>>(
-            d_Q, d_K, d_V, d_mask, N, d, num_tiles_K, num_tiles_Q, block_size_K, block_size_Q, softmax_scale, d_l, d_m, d_O);
+            d_Q, d_K, d_V, N, d, num_tiles_K, num_tiles_Q, block_size_K, block_size_Q, softmax_scale, d_l, d_m, d_O);
         cudaDeviceSynchronize();
 
         cudaError_t err = cudaGetLastError();
