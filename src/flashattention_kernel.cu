@@ -495,9 +495,10 @@ __global__ void forward_kernel_causal(const float *Q, const float *K, const floa
     float *Vj = &shared_memory[tile_size * 2];
     float *S = &shared_memory[tile_size * 3];
 
+
     for (int tile_idx_K = 0; tile_idx_K < num_tiles_K; tile_idx_K++)
     {
-        // Load Kj, Vj into SRAM
+        // Load Kj, Vj into SRAM, each thread loads Kj+thread_idx, Vj+thread_idx concurrently
         for (int x = 0; x < d; x++)
         {
             Kj[(thread_idx * d) + x] = K[qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x];
@@ -507,7 +508,10 @@ __global__ void forward_kernel_causal(const float *Q, const float *K, const floa
 
         for (int tile_idx_Q = 0; tile_idx_Q < num_tiles_Q; tile_idx_Q++)
         {
-            // Load Qi into SRAM
+            // Coarse-grained optimisation (Block-level)
+            if (mask[(tile_idx_Q * block_size_Q + thread_idx) * N + (tile_idx_K * block_size_K)] != 0) continue;
+            
+            // Load Qi into SRAM, each thread loads Qi+thread_idx concurrently
             for (int x = 0; x < d; x++)
             {
                 Qi[(thread_idx * d) + x] = Q[qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x];
@@ -521,29 +525,29 @@ __global__ void forward_kernel_causal(const float *Q, const float *K, const floa
             float row_max = -INFINITY;
             for (int y = 0; y < block_size_K; y++)
             {
-
-                if (mask[(tile_idx_Q * block_size_Q + thread_idx) * N + (tile_idx_K * block_size_K) + y] == 0) {
-                    float sum = 0;
-                    for (int x = 0; x < d; x++)
-                    {
-                        sum += Qi[(thread_idx * d) + x] * Kj[(y * d) + x];
-                    }
-                    sum *= softmax_scale;
-                    S[(block_size_K * thread_idx) + y] = sum;
-
-                    if (sum > row_max)
-                        row_max = sum;
+                float sum = 0;
+                for (int x = 0; x < d; x++)
+                {
+                    sum += Qi[(thread_idx * d) + x] * Kj[(y * d) + x];
                 }
+                sum *= softmax_scale;
+                S[(block_size_K * thread_idx) + y] = sum;
+
+                if (sum > row_max)
+                    row_max = sum;
             }
 
-            // Compute rowsum
+            // Compute rowsum and Pij + apply fine-grained mask (element-level)
             float row_sum = 0;
             for (int y = 0; y < block_size_K; y++)
             {
                 if (mask[(tile_idx_Q * block_size_Q + thread_idx) * N + (tile_idx_K * block_size_K) + y] == 0) {
                     S[(block_size_K * thread_idx) + y] = __expf(S[(block_size_K * thread_idx) + y] - row_max);
-                    row_sum += S[(block_size_K * thread_idx) + y];
+                } else {
+                    S[(block_size_K * thread_idx) + y] = 0.0;
                 }
+
+                row_sum += S[(block_size_K * thread_idx) + y];
             }
 
             // Compute m_new, l_new
@@ -556,9 +560,7 @@ __global__ void forward_kernel_causal(const float *Q, const float *K, const floa
                 float weighted_sum = 0;
                 for (int y = 0; y < block_size_K; y++)
                 {
-                    if (mask[(tile_idx_Q * block_size_Q + thread_idx) * N + (tile_idx_K * block_size_K) + y] == 0) {
-                        weighted_sum += S[(block_size_K * thread_idx) + y] * Vj[(y * d) + x];
-                    }
+                    weighted_sum += S[(block_size_K * thread_idx) + y] * Vj[(y * d) + x];
                 }
                 __syncthreads();
                 int index = qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x;
