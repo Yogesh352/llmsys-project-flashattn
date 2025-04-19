@@ -101,6 +101,7 @@ class TensorBackend:
         self.flash_attention_fw = ops.flash_attention_fw
         self.flash_attention_bw = ops.flash_attention_bw
         self.flash_attention_causal_fw = ops.flash_attention_causal_fw
+        self.flash_attention_causal_bw = ops.flash_attention_causal_bw
         # self.flash_attention_bw = ops.flash_attention_bw
 
 class SimpleOps(TensorOps):
@@ -250,7 +251,7 @@ class SimpleOps(TensorOps):
     @staticmethod
     def layernorm_bw():
         raise NotImplementedError("Not implemented in this assignment")
-    
+
     @staticmethod
     def flash_attention_fw():
         raise NotImplementedError("Not implemented in this assignment")
@@ -258,9 +259,13 @@ class SimpleOps(TensorOps):
     @staticmethod
     def flash_attention_bw():
         raise NotImplementedError("Not implemented in this assignment")
-    
+
     @staticmethod
     def flash_attention_causal_fw():
+        raise NotImplementedError("Not implemented in this assignment")
+
+    @staticmethod
+    def flash_attention_causal_bw():
         raise NotImplementedError("Not implemented in this assignment")
 
     is_cuda = False
