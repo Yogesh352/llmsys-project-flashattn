@@ -248,27 +248,27 @@ def test_multihead_attention_flash_attention_is_causal(
         result.to_numpy(), result_.detach().numpy(), atol=1e-5, rtol=1e-5
     )
 
-# Check backward
-# result.sum().backward()
-# result_.sum().backward()
+    # Check backward
+    result.sum().backward()
+    result_.sum().backward()
 
-# np.testing.assert_allclose(
-#     X.grad.to_numpy(), X_.grad.detach().numpy(), atol=1e-5, rtol=1e-5
-# )
+    np.testing.assert_allclose(
+        X.grad.to_numpy(), X_.grad.detach().numpy(), atol=1e-5, rtol=1e-5
+    )
 
-# np.testing.assert_allclose(
-#     layer.out_projection.weights.value.grad.to_numpy(),
-#     layer_.out_proj.weight.grad.detach().numpy().T,
-#     atol=1e-5,
-#     rtol=1e-5,
-# )
+    np.testing.assert_allclose(
+        layer.out_projection.weights.value.grad.to_numpy(),
+        layer_.out_proj.weight.grad.detach().numpy().T,
+        atol=1e-5,
+        rtol=1e-5,
+    )
 
-# # Since the torch W_Q, W_K, W_V is all one matrix, we can't compare
-# assert (
-#     (layer.q_projection.weights.value.grad is not None)
-#     and (layer.k_projection.weights.value.grad is not None)
-#     and (layer.v_projection.weights.value.grad is not None)
-# )
+    # Since the torch W_Q, W_K, W_V is all one matrix, we can't compare
+    assert (
+        (layer.q_projection.weights.value.grad is not None)
+        and (layer.k_projection.weights.value.grad is not None)
+        and (layer.v_projection.weights.value.grad is not None)
+    )
 
 
 # @pytest.mark.a2_3
