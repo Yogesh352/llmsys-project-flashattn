@@ -500,9 +500,9 @@ class FlashAttention(Function):
 
 class FlashAttentionCausal(Function):
     @staticmethod
-    def forward(ctx: Context, Q: Tensor, K: Tensor, V: Tensor, mask:Tensor) -> Tensor:
+    def forward(ctx: Context, Q: Tensor, K: Tensor, V: Tensor) -> Tensor:
         #   BEGIN ASSIGN3_2
-        O = Q.f.flash_attention_causal_fw(Q, K, V, mask)
+        O = Q.f.flash_attention_causal_fw(Q, K, V)
         return O
 
         #   END ASSIGN3_2

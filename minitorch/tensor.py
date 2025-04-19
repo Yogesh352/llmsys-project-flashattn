@@ -432,5 +432,5 @@ class Tensor:
     ) -> Tensor:
         return FlashAttention.apply(self, K, V)
 
-    def flash_attention_causal(self, K: Tensor, V: Tensor, mask:Tensor) -> Tensor:
-        return FlashAttentionCausal.apply(self, K, V, mask)
+    def flash_attention_causal(self, K: Tensor, V: Tensor) -> Tensor:
+        return FlashAttentionCausal.apply(self, K, V)

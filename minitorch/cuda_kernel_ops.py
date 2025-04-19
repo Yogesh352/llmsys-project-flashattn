@@ -758,7 +758,7 @@ class CudaKernelOps(TensorOps):
         return dQ, dK, dV
 
     @staticmethod
-    def flash_attention_causal_fw(Q: Tensor, K: Tensor, V: Tensor, mask:Tensor):
+    def flash_attention_causal_fw(Q: Tensor, K: Tensor, V: Tensor):
         O = Q.zeros((Q.shape))
         l = Q.zeros((Q.shape[0], Q.shape[1], Q.shape[2]))
 
@@ -780,7 +780,6 @@ class CudaKernelOps(TensorOps):
             np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
             np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
             np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
-            np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags="C_CONTIGUOUS"),
             ctypes.c_int,
             ctypes.c_int,
             ctypes.c_int,
@@ -796,7 +795,6 @@ class CudaKernelOps(TensorOps):
             O._tensor._storage,
             l._tensor._storage,
             m._tensor._storage,
-            mask._tensor._storage,
             B,
             nh,
             N,
