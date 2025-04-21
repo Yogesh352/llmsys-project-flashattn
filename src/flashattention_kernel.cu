@@ -32,7 +32,6 @@ __global__ void forward_kernel(const float *Q, const float *K, const float *V, c
     float *Qi = shared_memory;
     float *Kj = &shared_memory[tile_size];
     float *Vj = &shared_memory[tile_size * 2];
-    // float *S = &shared_memory[tile_size * 2 + block_size_K * block_size_Q];
     float *S = &shared_memory[tile_size * 3];
 
 
@@ -49,11 +48,11 @@ __global__ void forward_kernel(const float *Q, const float *K, const float *V, c
 
             // printf("K and V access: %d\n", qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x);
         }
+
         __syncthreads();
 
         for (int tile_idx_Q = 0; tile_idx_Q < num_tiles_Q; tile_idx_Q++)
         {
-
             for (int x = 0; x < d; x++)
             {
                 Qi[(thread_idx * d) + x] = Q[qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x];
@@ -271,8 +270,8 @@ extern "C"
     {
 
         int block_size_K, block_size_Q;
-        int max_sram_size;
-        cudaDeviceGetAttribute(&max_sram_size, cudaDevAttrMaxSharedMemoryPerBlock, 0);
+        // int max_sram_size;
+        // cudaDeviceGetAttribute(&max_sram_size, cudaDevAttrMaxSharedMemoryPerBlock, 0);
 
         // TODO: Optimise memory usage for lower d, low hanging fruit for those that can be 4x
 
@@ -281,6 +280,7 @@ extern "C"
         // block_size_K =8; block_size_Q =8;
 
 
+        // block_size_K = min(min(N, 2048/d), 64); block_size_Q = min(min(N, 2048/d), 64);
         block_size_K = min(min(N, 2048/d), 64); block_size_Q = min(min(N, 2048/d), 64);
         while(N % block_size_K != 0){
             block_size_K/=2;
@@ -315,6 +315,7 @@ extern "C"
 
         // Uncomment if you want to see SRAM requested
         // printf("FORWARD: d: %d | num_head: %d | N: %d | Block Size Q: %d | Block Size K: %d | Max shared memory: %d, requested shared memory: %d \n", d, num_heads, N, block_size_Q, block_size_K, max_sram_size, shared_mem_size);
+        // printf("FORWARD: d: %d | num_head: %d | N: %d | Block Size Q: %d | Block Size K: %d | requested shared memory: %d \n", d, num_heads, N, block_size_Q, block_size_K, shared_mem_size);
 
         // // This should never run if your code checks for too large d
         // if (shared_mem_size >= max_sram_size) {
@@ -435,13 +436,13 @@ extern "C"
         const int shared_mem_size = (4 * block_size_K * d * sizeof(float)) + (3 * block_size_Q * d * sizeof(float)) + (2 * block_size_K * block_size_Q * sizeof(float)) + (2 * block_size_K * sizeof(float));;
 
         // Uncomment if you want to see SRAM requested
-        printf("BACKWARD: d: %d | num_head: %d | N: %d | Block Size Q: %d | Block Size K: %d | Max shared memory: %d, requested shared memory: %d \n", d, num_heads, N, block_size_Q, block_size_K, max_sram_size, shared_mem_size);
+        // printf("BACKWARD: d: %d | num_head: %d | N: %d | Block Size Q: %d | Block Size K: %d | Max shared memory: %d, requested shared memory: %d \n", d, num_heads, N, block_size_Q, block_size_K, max_sram_size, shared_mem_size);
 
         // // This should never run if your code checks for too large d
-        if (shared_mem_size >= max_sram_size) {
-            printf("Too much SRAM requested: %d\n", shared_mem_size);
-            return;
-        }
+        // if (shared_mem_size >= max_sram_size) {
+        //     printf("Too much SRAM requested: %d\n", shared_mem_size);
+        //     return;
+        // }
 
         dim3 grid_dim(batch_size, num_heads);
         dim3 block_dim(block_size_K);
@@ -506,10 +507,13 @@ __global__ void forward_kernel_causal(const float *Q, const float *K, const floa
         }
         __syncthreads();
 
-        for (int tile_idx_Q = 0; tile_idx_Q < num_tiles_Q; tile_idx_Q++)
+        // for (int tile_idx_Q = 0; tile_idx_Q < num_tiles_Q; tile_idx_Q++)
+        // {
+        //     // Coarse-grained optimisation (Block-level)
+        //     if (tile_idx_Q < tile_idx_K) continue;
+        
+        for (int tile_idx_Q = tile_idx_K; tile_idx_Q < num_tiles_Q; tile_idx_Q++)
         {
-            // Coarse-grained optimisation (Block-level)
-            if (tile_idx_Q < tile_idx_K) continue;
             
             // Load Qi into SRAM, each thread loads Qi+thread_idx concurrently
             for (int x = 0; x < d; x++)
