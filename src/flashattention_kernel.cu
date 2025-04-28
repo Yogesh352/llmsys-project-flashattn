@@ -14,19 +14,17 @@ __global__ void forward_kernel(const float *Q, const float *K, const float *V, c
     int batch_idx = blockIdx.x;
     int head_idx = blockIdx.y;
 
-    int qkv_offset = (batch_idx * gridDim.y * N * d) + (head_idx * N * d);
-    // int qkv_offset_2 = (batch_idx * gridDim.y * N * d) + (head_idx / gridDim.y * (block_size_K)*d) + (head_idx * d);
-    // int qkv_offset_2 = (batch_idx * gridDim.y * N * d) + (block_size_K * thread_idx * gridDim.y * d) + (head_idx * d);
 
     // Offset Calculation
-    // Flattened 1D Data Shape: (B, N, nh, d)
+    // Flattened 1D Data (Q, K, V) Shape: (B, nh, N, d)
+    // Flattened 1D Data (l, m) Shape: (B, nh, N)
     // gridDim shape = (x, y) = (B, nh)
     // 1) Batch -> (batch_idx * gridDim.y * N * d)
-    // 2) N -> (block_size_K * thread_idx * gridDim.y * d)
-    // 3) nh -> head_idx * d
-
+    // 2) nh -> (head_idx * N * d)
+    int qkv_offset = (batch_idx * gridDim.y * N * d) + (head_idx * N * d);
     int lm_offset = (batch_idx * gridDim.y * N) + (head_idx * N);
 
+    // Allocate SRAM
     extern __shared__ float shared_memory[];
     int tile_size = block_size_K * d;
     float *Qi = shared_memory;
@@ -35,8 +33,10 @@ __global__ void forward_kernel(const float *Q, const float *K, const float *V, c
     float *S = &shared_memory[tile_size * 3];
 
 
+    // Loop through num_tiles_K
     for (int tile_idx_K = 0; tile_idx_K < num_tiles_K; tile_idx_K++)
     {
+        // Load Kj and Vj into SRAM for all threads in the thread block to use
         for (int x = 0; x < d; x++)
         {
 
@@ -46,8 +46,10 @@ __global__ void forward_kernel(const float *Q, const float *K, const float *V, c
 
         __syncthreads();
 
+        // Loop through num_tiles_Q
         for (int tile_idx_Q = 0; tile_idx_Q < num_tiles_Q; tile_idx_Q++)
         {
+            // Load Qi, li, mi into SRAM
             for (int x = 0; x < d; x++)
             {
                 Qi[(thread_idx * d) + x] = Q[qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x];
@@ -57,6 +59,7 @@ __global__ void forward_kernel(const float *Q, const float *K, const float *V, c
             float prev_m = m[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx];
             float prev_l = l[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx];
 
+            // Compute Sij and mij values for the relevant Qi and Kj values in the block
             float row_max = -INFINITY;
             for (int y = 0; y < block_size_K; y++)
             {
@@ -73,6 +76,7 @@ __global__ void forward_kernel(const float *Q, const float *K, const float *V, c
                     row_max = sum;
             }
 
+            // Compute Pij and lij values for the relevant Qi and Kj values in the block
             float row_sum = 0;
             for (int y = 0; y < block_size_K; y++)
             {
@@ -80,9 +84,11 @@ __global__ void forward_kernel(const float *Q, const float *K, const float *V, c
                 row_sum += S[(block_size_K * thread_idx) + y];
             }
 
+            // Compute new mi and li values
             float new_m = fmax(prev_m, row_max);
             float new_l = (__expf(prev_m - new_m) * prev_l) + (__expf(row_max - new_m) * row_sum);
 
+            // Compute Oi values and write to HBM
             for (int x = 0; x < d; x++)
             {
                 float weighted_sum = 0;
@@ -97,6 +103,7 @@ __global__ void forward_kernel(const float *Q, const float *K, const float *V, c
                             (__expf(row_max - new_m) * weighted_sum));
             }
 
+            // Write mi and li to HBM
             m[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx] = new_m;
             l[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx] = new_l;
         }
@@ -244,23 +251,17 @@ extern "C"
     {
 
         int block_size_K, block_size_Q;
-        // int max_sram_size;
-        // cudaDeviceGetAttribute(&max_sram_size, cudaDevAttrMaxSharedMemoryPerBlock, 0);
 
-        // TODO: Optimise memory usage for lower d, low hanging fruit for those that can be 4x
-
-        // Assume SRAM >= 32768
+        // Assume SRAM >= 32768, works for V100, A100 and H100
+        // returns if block size < 1, unable to fit into SRAM
         if (d>2048) return;
-        // block_size_K =8; block_size_Q =8;
 
-
-        // block_size_K = min(min(N, 2048/d), 64); block_size_Q = min(min(N, 2048/d), 64);
+        // Compute block size dynamically to maximize block size and maximise parallelism
         block_size_K = min(min(N, 2048/d), 64); block_size_Q = min(min(N, 2048/d), 64);
         while(N % block_size_K != 0){
             block_size_K/=2;
             block_size_Q/=2;
         }
-
 
         const int num_tiles_K = ceil((float)N / block_size_K);
         const int num_tiles_Q = ceil((float)N / block_size_Q);
@@ -286,18 +287,6 @@ extern "C"
         cudaMemcpy(d_m, m, l_size * sizeof(float), cudaMemcpyHostToDevice);
 
         const int shared_mem_size = (2 * block_size_K * d * sizeof(float)) + (block_size_Q * d * sizeof(float)) + (block_size_K * block_size_Q * sizeof(float)) + (2 * block_size_K * sizeof(float));
-
-        // Uncomment if you want to see SRAM requested
-        // printf("FORWARD: d: %d | num_head: %d | N: %d | Block Size Q: %d | Block Size K: %d | Max shared memory: %d, requested shared memory: %d \n", d, num_heads, N, block_size_Q, block_size_K, max_sram_size, shared_mem_size);
-        // printf("FORWARD: d: %d | num_head: %d | N: %d | Block Size Q: %d | Block Size K: %d | requested shared memory: %d \n", d, num_heads, N, block_size_Q, block_size_K, shared_mem_size);
-
-        // // This should never run if your code checks for too large d
-        // if (shared_mem_size >= max_sram_size) {
-        //     // fprintf(stderr, "Too much SRAM requested: %f\n", shared_mem_size);
-        //     // exit(EXIT_FAILURE);
-        //     // printf("Too much SRAM requested: %d\n", shared_mem_size);
-        //     return;
-        // }
 
         dim3 grid_dim(batch_size, num_heads);
         dim3 block_dim(block_size_K);
@@ -355,14 +344,12 @@ extern "C"
     {
 
         int block_size_K, block_size_Q;
-        int max_sram_size;
-        cudaDeviceGetAttribute(&max_sram_size, cudaDevAttrMaxSharedMemoryPerBlock, 0);
 
-        // TODO: Optimise memory usage for lower d, low hanging fruit for those that can be 4x
-
-        // Assume SRAM >= 32768
+        // Assume SRAM >= 32768, works for V100, A100 and H100
+        // returns if block size < 1, unable to fit into SRAM
         if (d>2048) return;
 
+        // Compute block size dynamically to maximize block size and maximise parallelism
         block_size_K = min(find_max_block_size(d, max_sram_size), N); block_size_Q = block_size_K;
         
         const int num_tiles_K = ceil((float)N / block_size_K);
@@ -406,15 +393,6 @@ extern "C"
 
         const int shared_mem_size = (4 * block_size_K * d * sizeof(float)) + (3 * block_size_Q * d * sizeof(float)) + (2 * block_size_K * block_size_Q * sizeof(float)) + (2 * block_size_K * sizeof(float));;
 
-        // Uncomment if you want to see SRAM requested
-        // printf("BACKWARD: d: %d | num_head: %d | N: %d | Block Size Q: %d | Block Size K: %d | Max shared memory: %d, requested shared memory: %d \n", d, num_heads, N, block_size_Q, block_size_K, max_sram_size, shared_mem_size);
-
-        // // This should never run if your code checks for too large d
-        // if (shared_mem_size >= max_sram_size) {
-        //     printf("Too much SRAM requested: %d\n", shared_mem_size);
-        //     return;
-        // }
-
         dim3 grid_dim(batch_size, num_heads);
         dim3 block_dim(block_size_K);
 
@@ -457,9 +435,16 @@ __global__ void forward_kernel_causal(const float *Q, const float *K, const floa
     int batch_idx = blockIdx.x;
     int head_idx = blockIdx.y;
 
+    // Offset Calculation
+    // Flattened 1D Data (Q, K, V) Shape: (B, nh, N, d)
+    // Flattened 1D Data (l, m) Shape: (B, nh, N)
+    // gridDim shape = (x, y) = (B, nh)
+    // 1) Batch -> (batch_idx * gridDim.y * N * d)
+    // 2) nh -> (head_idx * N * d)
     int qkv_offset = (batch_idx * gridDim.y * N * d) + (head_idx * N * d);
     int lm_offset = (batch_idx * gridDim.y * N) + (head_idx * N);
 
+    // Allocate SRAM
     extern __shared__ float shared_memory[];
     int tile_size = block_size_K * d;
     float *Qi = shared_memory;
@@ -470,7 +455,7 @@ __global__ void forward_kernel_causal(const float *Q, const float *K, const floa
 
     for (int tile_idx_K = 0; tile_idx_K < num_tiles_K; tile_idx_K++)
     {
-        // Load Kj, Vj into SRAM, each thread loads Kj+thread_idx, Vj+thread_idx concurrently
+        // Load Kj and Vj into SRAM for all threads in the thread block to use
         for (int x = 0; x < d; x++)
         {
             Kj[(thread_idx * d) + x] = K[qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x];
@@ -478,25 +463,22 @@ __global__ void forward_kernel_causal(const float *Q, const float *K, const floa
         }
         __syncthreads();
 
-        // for (int tile_idx_Q = 0; tile_idx_Q < num_tiles_Q; tile_idx_Q++)
-        // {
-        //     // Coarse-grained optimisation (Block-level)
-        //     if (tile_idx_Q < tile_idx_K) continue;
+        // Apply coarse-grained optimisation (Block-level)
+        if (tile_idx_Q < tile_idx_K) continue;
         
         for (int tile_idx_Q = tile_idx_K; tile_idx_Q < num_tiles_Q; tile_idx_Q++)
         {
             
-            // Load Qi into SRAM, each thread loads Qi+thread_idx concurrently
+            // Load Qi, li, mi into SRAM
             for (int x = 0; x < d; x++)
             {
                 Qi[(thread_idx * d) + x] = Q[qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x];
             }
 
-            // Load li, mi into SRAM
             float prev_m = m[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx];
             float prev_l = l[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx];
 
-            // Compute Sij & rowmax
+            // Compute Sij and mij values for the relevant Qi and Kj values in the block
             float row_max = -INFINITY;
             for (int y = 0; y < block_size_K; y++)
             {
@@ -512,7 +494,8 @@ __global__ void forward_kernel_causal(const float *Q, const float *K, const floa
                     row_max = sum;
             }
 
-            // Compute rowsum and Pij + apply fine-grained mask (element-level)
+            // Compute Pij and lij values for the relevant Qi and Kj values in the block
+            // Apply fine-grained optimisation (Element-level), skip unnecessary computations
             float row_sum = 0;
             for (int y = 0; y < block_size_K; y++)
             {
@@ -525,11 +508,11 @@ __global__ void forward_kernel_causal(const float *Q, const float *K, const floa
                 row_sum += S[(block_size_K * thread_idx) + y];
             }
 
-            // Compute m_new, l_new
+            // Compute new mi and li values
             float new_m = fmax(prev_m, row_max);
             float new_l = (__expf(prev_m - new_m) * prev_l) + (__expf(row_max - new_m) * row_sum);
 
-            // Write O to HBM
+            // Compute Oi values and write to HBM
             for (int x = 0; x < d; x++)
             {
                 float weighted_sum = 0;
@@ -544,7 +527,7 @@ __global__ void forward_kernel_causal(const float *Q, const float *K, const floa
                             (__expf(row_max - new_m) * weighted_sum));
             }
 
-            // Write li, mi to HBM
+            // Write mi and li to HBM
             m[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx] = new_m;
             l[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx] = new_l;
         }
@@ -594,7 +577,6 @@ __global__ void backward_kernel_causal(const float *Q, const float *K, const flo
             dKj[sram_idx] = 0.0f;
             dVj[sram_idx] = 0.0f;
         }
-        
 
 
         for (int tile_idx_Q = 0; tile_idx_Q < num_tiles_Q; tile_idx_Q++)
@@ -694,8 +676,11 @@ extern "C"
 
         int block_size_K, block_size_Q;
 
+        // Assume SRAM >= 32768, works for V100, A100 and H100
+        // returns if block size < 1, unable to fit into SRAM
         if (d>2048) return;
 
+        // Compute block size dynamically to maximize block size and maximise parallelism
         block_size_K = min(min(N, 2048/d), 64); block_size_Q = min(min(N, 2048/d), 64);
 
         const int num_tiles_K = ceil((float)N / block_size_K);
@@ -757,14 +742,12 @@ extern "C"
     {
 
         int block_size_K, block_size_Q;
-        int max_sram_size;
-        cudaDeviceGetAttribute(&max_sram_size, cudaDevAttrMaxSharedMemoryPerBlock, 0);
 
-        // TODO: Optimise memory usage for lower d, low hanging fruit for those that can be 4x
-
-        // Assume SRAM >= 32768
+        // Assume SRAM >= 32768, works for V100, A100 and H100
+        // returns if block size < 1, unable to fit into SRAM
         if (d>2048) return;
 
+        // Compute block size dynamically to maximize block size and maximise parallelism
         block_size_K = min(find_max_block_size(d, max_sram_size), N); block_size_Q = block_size_K;
 
         const int num_tiles_K = ceil((float)N / block_size_K);
@@ -807,15 +790,6 @@ extern "C"
         cudaMemcpy(d_m, m, l_size * sizeof(float), cudaMemcpyHostToDevice);
 
         const int shared_mem_size = (4 * block_size_K * d * sizeof(float)) + (3 * block_size_Q * d * sizeof(float)) + (2 * block_size_K * block_size_Q * sizeof(float)) + (2 * block_size_K * sizeof(float));;
-
-        // Uncomment if you want to see SRAM requested
-        printf("BACKWARD CAUSAL: d: %d | num_head: %d | N: %d | Block Size Q: %d | Block Size K: %d | Max shared memory: %d, requested shared memory: %d \n", d, num_heads, N, block_size_Q, block_size_K, max_sram_size, shared_mem_size);
-
-        // // This should never run if your code checks for too large d
-        if (shared_mem_size >= max_sram_size) {
-            printf("Too much SRAM requested: %d\n", shared_mem_size);
-            return;
-        }
 
         dim3 grid_dim(batch_size, num_heads);
         dim3 block_dim(block_size_K);

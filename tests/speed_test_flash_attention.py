@@ -17,23 +17,26 @@ def speed_test_multihead_attention_flash_attention(
     X = minitorch.tensor_from_numpy(data, backend, True)
     X_ = torch.tensor(data, dtype=torch.float32, requires_grad=True)
 
+    # Torch implementation
     layer_ = torch.nn.MultiheadAttention(
         n_embd, num_heads, p_dropout, bias=False, batch_first=True, dtype=torch.float32
     )
 
+    # Our FlashAttention Implementation
     flashattn = minitorch.MultiHeadAttention(
         n_embd, num_heads, causal, p_dropout, bias=False, backend=backend, use_fused_kernel=False, use_flash_attention=True
     )
 
+    # Our MiniTorch implementation
     layer = minitorch.MultiHeadAttention(
         n_embd, num_heads, causal, p_dropout, bias=False, backend=backend, use_fused_kernel=False, use_flash_attention=False
     )
 
     # Set weights of minitorch layer to torch weights
-    w_qkv = layer_.in_proj_weight.detach().numpy().T.copy()  # (n_embd, 3*n_embd)
+    w_qkv = layer_.in_proj_weight.detach().numpy().T.copy() 
     w_q_, w_k_, w_v_ = [
         w.copy() for w in np.split(w_qkv, 3, -1)
-    ]  # 3 * (n_embd, n_embd)
+    ] 
     w_out_ = layer_.out_proj.weight.detach().numpy().T.copy()
 
     w_q = minitorch.tensor_from_numpy((w_q_), backend=backend, requires_grad=True)
@@ -53,6 +56,7 @@ def speed_test_multihead_attention_flash_attention(
 
     M = torch.triu(-float("inf") * torch.ones(queries_len, queries_len), 1)
 
+    # Apply causal mask if required
     result_, _ = layer_(X_, X_, X_, attn_mask=M) if causal else layer_(X_, X_, X_)
 
     # Measure execution time for minitorch implementation
@@ -104,10 +108,10 @@ def profile(batch_size, queries_len, n_embd, num_heads, p_dropout, backend):
     )
 
     # Set weights of minitorch layer to torch weights
-    w_qkv = layer_.in_proj_weight.detach().numpy().T.copy()  # (n_embd, 3*n_embd)
+    w_qkv = layer_.in_proj_weight.detach().numpy().T.copy() 
     w_q_, w_k_, w_v_ = [
         w.copy() for w in np.split(w_qkv, 3, -1)
-    ]  # 3 * (n_embd, n_embd)
+    ] 
     w_out_ = layer_.out_proj.weight.detach().numpy().T.copy()
 
     w_q = minitorch.tensor_from_numpy((w_q_), backend=backend, requires_grad=True)
@@ -129,7 +133,7 @@ def profile(batch_size, queries_len, n_embd, num_heads, p_dropout, backend):
     profiler = cProfile.Profile()
     profiler.enable()
     #####
-    result = layer(X)
+    layer(X)
     #####
     profiler.disable()
     stats = pstats.Stats(profiler).sort_stats('cumtime')
@@ -138,7 +142,7 @@ def profile(batch_size, queries_len, n_embd, num_heads, p_dropout, backend):
     profiler = cProfile.Profile()
     profiler.enable()
     #####
-    result = flashattn(X)
+    flashattn(X)
     #####
     profiler.disable()
     stats = pstats.Stats(profiler).sort_stats('cumtime')
@@ -154,8 +158,6 @@ def main():
     backend = minitorch.TensorBackend(CudaKernelOps)
 
     df = pd.DataFrame(columns=['batch_size', 'N', 'd', 'nh', 'p_dropout', 'causal', 'original_time', 'flashattn_time'])
-
-    # profile(batch_size[-1], queries_len[-1], n_embd[-1], num_heads[-1], p_dropout, backend)
 
     for batch in batch_size:
         for N in queries_len:
