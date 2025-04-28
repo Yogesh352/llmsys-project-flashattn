@@ -140,10 +140,11 @@ __global__ void backward_kernel(const float *Q, const float *K, const float *V, 
     float *S = &shared_memory[tile_size * 7];
     float *dS = &shared_memory[tile_size * 7 + block_size_K * block_size_Q];
 
-
-
+    // Loop through num_tiles_K
     for (int tile_idx_K = 0; tile_idx_K < num_tiles_K; tile_idx_K++)
-    {
+    {   
+        // Load Kj and Vj into SRAM for all threads in the thread block to use
+        // Initialize gradients of dK and dV to 0.0
         for (int x = 0; x < d; x++)
         {
             int hbm_idx = qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x;
@@ -155,11 +156,10 @@ __global__ void backward_kernel(const float *Q, const float *K, const float *V, 
             dVj[sram_idx] = 0.0f;
         }
         
-
-
+        // Loop through num_tiles_Q
         for (int tile_idx_Q = 0; tile_idx_Q < num_tiles_Q; tile_idx_Q++)
-        {
-            if (tile_idx_Q < tile_idx_K) continue;
+        {   
+            // Load Qi, Oi, dO into SRAM
             for (int x = 0; x < d; x++)
             {
                 int hbm_idx = qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x;
@@ -171,9 +171,11 @@ __global__ void backward_kernel(const float *Q, const float *K, const float *V, 
 
             }
 
+            //Load l and m that was calculated into the SRAM
             float m_val = m[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx];
             float l_val = l[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx];
 
+            // Compute Sij using Q and K and softmax scale
             for (int y = 0; y < block_size_K; y++)
             {
                 float sum = 0;
@@ -186,13 +188,14 @@ __global__ void backward_kernel(const float *Q, const float *K, const float *V, 
                 S[(block_size_K * thread_idx) + y] = sum;
             }
 
-            // float row_sum = 0;
+            //Compute Pij and load into SRAM
             for (int y = 0; y < block_size_K; y++)
             {   
                 S[(block_size_K * thread_idx) + y] = (1 / l_val) * __expf(S[(block_size_K * thread_idx) + y] - m_val);
             }
             __syncthreads();
 
+            //Use Pij and dOi values to calculate dV and store it in SRAM
             for (int x = 0; x < d; x++) {
                 float sum = 0;
                 for (int y = 0; y < block_size_K; y++) {
@@ -201,6 +204,7 @@ __global__ void backward_kernel(const float *Q, const float *K, const float *V, 
                 dVj[(thread_idx * d) + x] += sum;
             }
 
+            // Use previously calculated dOi values with V to calculate dS
             for (int y = 0; y < block_size_K; y++) {
                 float sum = 0;
                 for (int x = 0; x < d; x++) {
@@ -209,15 +213,18 @@ __global__ void backward_kernel(const float *Q, const float *K, const float *V, 
                 dS[(block_size_K * thread_idx) + y] = sum;
             }
 
+            // Accumulate value of Di using Oi and dOi for future calculations
             float Di = 0;
             for (int x = 0; x < d; x++) {
                 Di += dOi[(thread_idx * d) + x] * Oi[(thread_idx * d) + x];
             }
 
+            //Calculate dS using S, dS and Di
             for (int y = 0; y < block_size_K; ++y) {
                 dS[(block_size_K * thread_idx) + y] = S[(block_size_K * thread_idx) + y] * (dS[(block_size_K * thread_idx) + y] - Di);
             }
 
+            //Calculate dQ using calculated dS and K
             for (int x = 0; x < d; x++) {
                 float sum = 0;
                 for (int y = 0; y < block_size_K; y++) {
@@ -227,6 +234,7 @@ __global__ void backward_kernel(const float *Q, const float *K, const float *V, 
                 dQ[qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x] += sum;
             }
 
+            //Calculate dK using calculated dS and Q
             for (int x = 0; x < d; x++) {
                 float sum = 0;
                 for (int y = 0; y < block_size_K; y++) {
@@ -237,6 +245,7 @@ __global__ void backward_kernel(const float *Q, const float *K, const float *V, 
             }
         }
 
+        // Load dK and dV vvalues into HBM after calculation
         for (int x = 0; x < d; x++) {
             dK[qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x] = dKj[(thread_idx * d) + x];
             dV[qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x] = dVj[(thread_idx * d) + x];
@@ -563,10 +572,11 @@ __global__ void backward_kernel_causal(const float *Q, const float *K, const flo
     float *S = &shared_memory[tile_size * 7];
     float *dS = &shared_memory[tile_size * 7 + block_size_K * block_size_Q];
 
-
-
+    // Loop through num_tiles_K
     for (int tile_idx_K = 0; tile_idx_K < num_tiles_K; tile_idx_K++)
     {
+        // Load Kj and Vj into SRAM for all threads in the thread block to use
+        // Initialize gradients of dK and dV to 0.0
         for (int x = 0; x < d; x++)
         {
             int hbm_idx = qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x;
@@ -578,10 +588,10 @@ __global__ void backward_kernel_causal(const float *Q, const float *K, const flo
             dVj[sram_idx] = 0.0f;
         }
 
-
+        // Loop through num_tiles_Q
         for (int tile_idx_Q = 0; tile_idx_Q < num_tiles_Q; tile_idx_Q++)
         {
-
+            // Load Qi, Oi, dO into SRAM
             for (int x = 0; x < d; x++)
             {
                 int hbm_idx = qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x;
@@ -592,9 +602,11 @@ __global__ void backward_kernel_causal(const float *Q, const float *K, const flo
                 dOi[sram_idx] = dO[hbm_idx];
             }
 
+            //Load l and m that was calculated into the SRAM
             float m_val = m[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx];
             float l_val = l[lm_offset + (block_size_Q * tile_idx_Q) + thread_idx];
             
+            // Compute Sij using Q and K and softmax scale
             for (int y = 0; y < block_size_K; y++)
             {
                 float sum = 0;
@@ -607,6 +619,7 @@ __global__ void backward_kernel_causal(const float *Q, const float *K, const flo
                 S[(block_size_K * thread_idx) + y] = sum;
             }
 
+            //Compute Pij and load into SRAM. Skip certain calculation and account for causal computation
             for (int y = 0; y < block_size_K; y++)
             {   
                 if ((tile_idx_Q * block_size_Q + thread_idx) >= (tile_idx_K * block_size_K) + y) {
@@ -615,8 +628,9 @@ __global__ void backward_kernel_causal(const float *Q, const float *K, const flo
                     S[(block_size_K * thread_idx) + y] = 0.0;
                 }
             }
-            __syncthreads();
-
+            __syncthreads();    
+            
+            //Use Pij and dOi values to calculate dV and store it in SRAM
             for (int x = 0; x < d; x++) {
                 float sum = 0;
                 for (int y = 0; y < block_size_K; y++) {
@@ -625,6 +639,7 @@ __global__ void backward_kernel_causal(const float *Q, const float *K, const flo
                 dVj[(thread_idx * d) + x] += sum;
             }
 
+            // Use previously calculated dOi values with V to calculate dS
             for (int y = 0; y < block_size_K; y++) {
                 float sum = 0;
                 for (int x = 0; x < d; x++) {
@@ -633,15 +648,18 @@ __global__ void backward_kernel_causal(const float *Q, const float *K, const flo
                 dS[(block_size_K * thread_idx) + y] = sum;
             }
 
+            // Accumulate value of Di using Oi and dOi for future calculations
             float Di = 0;
             for (int x = 0; x < d; x++) {
                 Di += dOi[(thread_idx * d) + x] * Oi[(thread_idx * d) + x];
             }
 
+            //Calculate dS using S, dS and Di
             for (int y = 0; y < block_size_K; ++y) {
                 dS[(block_size_K * thread_idx) + y] = S[(block_size_K * thread_idx) + y] * (dS[(block_size_K * thread_idx) + y] - Di);
             }
 
+            //Calculate dQ using calculated dS and K
             for (int x = 0; x < d; x++) {
                 float sum = 0;
                 for (int y = 0; y < block_size_K; y++) {
@@ -651,6 +669,7 @@ __global__ void backward_kernel_causal(const float *Q, const float *K, const flo
                 dQ[qkv_offset + (tile_size * tile_idx_Q) + (thread_idx * d) + x] += sum;
             }
 
+            //Calculate dK using calculated dS and Q
             for (int x = 0; x < d; x++) {
                 float sum = 0;
                 for (int y = 0; y < block_size_K; y++) {
@@ -661,6 +680,7 @@ __global__ void backward_kernel_causal(const float *Q, const float *K, const flo
             }
         }
 
+        // Load dK and dV vvalues into HBM after calculation
         for (int x = 0; x < d; x++) {
             dK[qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x] = dKj[(thread_idx * d) + x];
             dV[qkv_offset + (tile_size * tile_idx_K) + (thread_idx * d) + x] = dVj[(thread_idx * d) + x];
